@@ -203,7 +203,7 @@ function attachMerchantToUser(user, details = {}) {
       name: shopName,
       type: shopType,
       publicId: `${slug(shopName)}-${Math.random().toString(36).slice(2, 7)}`,
-      description: 'Adicione uma descricao para apresentar seu comercio.',
+      description: details.description || metadata.shopDescription || 'Adicione uma descricao para apresentar seu comercio.',
       photo: '',
       isOpen: true,
       schedule: defaultShopSchedule()
@@ -260,7 +260,8 @@ function render() {
     ensureDemoData();
   }
 
-  if (!merchantLogged() || !state.merchant || !state.shop) return authView();
+  if (!merchantLogged()) return authView();
+  if (!state.merchant || !state.shop || state.merchant.authUserId !== authenticatedUser.id) return shopSetupView();
   merchantPanel();
 }
 
@@ -271,8 +272,9 @@ async function bootstrap() {
   try {
     const { data, error } = await window.pedeiaSupabase.auth.getSession();
     const user = data?.session?.user;
-    if (!error && user && user.email_confirmed_at && attachMerchantToUser(user)) {
+    if (!error && user && user.email_confirmed_at) {
       authenticatedUser = user;
+      attachMerchantToUser(user);
     } else if (data?.session) {
       await window.pedeiaSupabase.auth.signOut();
     }
@@ -350,6 +352,68 @@ function authView() {
   document.querySelector('#login-form').onsubmit = loginMerchant;
 }
 
+function shopSetupView() {
+  const metadata = authenticatedUser?.user_metadata || {};
+  app.innerHTML = `
+    <main class="auth-screen shop-setup-screen">
+      <div class="auth-art">
+        ${brand()}
+        <div class="art-copy">
+          <span class="eyebrow">CONTA AUTENTICADA</span>
+          <h1>Sua loja começa <em>aqui.</em></h1>
+          <p>Complete os dados do seu comércio para abrir o painel e começar a organizar seus pedidos.</p>
+          <div class="art-tiles">
+            <div class="art-tile burger-tile"></div>
+            <div class="art-tile drink-tile"></div>
+            <div class="art-tile chart-tile"></div>
+          </div>
+        </div>
+      </div>
+      <section class="auth-card">
+        <span class="eyebrow">CONFIGURAÇÃO INICIAL</span>
+        <h2>Cadastre sua loja</h2>
+        <p>${esc(authenticatedUser?.email || '')}</p>
+        <form id="shop-setup-form" class="auth-form">
+          <label>Seu nome<input name="name" required value="${esc(metadata.name || '')}" placeholder="Como podemos chamar você?"></label>
+          <label>Nome do comércio<input name="shopName" required value="${esc(metadata.shopName || '')}" placeholder="Ex.: Brasa & Massa"></label>
+          <label>Tipo de comércio<select name="shopType"><option ${metadata.shopType === 'Restaurante' ? 'selected' : ''}>Restaurante</option><option ${metadata.shopType === 'Lanchonete' ? 'selected' : ''}>Lanchonete</option><option ${metadata.shopType === 'Hamburgueria' ? 'selected' : ''}>Hamburgueria</option><option ${metadata.shopType === 'Pizzaria' ? 'selected' : ''}>Pizzaria</option><option ${metadata.shopType === 'Loja' ? 'selected' : ''}>Loja</option><option ${metadata.shopType === 'Outro comércio' ? 'selected' : ''}>Outro comércio</option></select></label>
+          <button class="primary-button auth-submit">Salvar e abrir painel <b>-></b></button>
+        </form>
+        <button class="secondary-button" data-setup-logout>Sair da conta</button>
+      </section>
+    </main>
+  `;
+
+  document.querySelector('#shop-setup-form').onsubmit = finishShopSetup;
+  document.querySelector('[data-setup-logout]').onclick = () => {
+    authenticatedUser = null;
+    window.pedeiaSupabase.auth.signOut().then(render);
+  };
+}
+
+function finishShopSetup(event) {
+  event.preventDefault();
+  const data = new FormData(event.currentTarget);
+  const details = {
+    name: String(data.get('name') || '').trim(),
+    shopName: String(data.get('shopName') || '').trim(),
+    shopType: String(data.get('shopType') || 'Loja')
+  };
+
+  if (!details.name || !details.shopName) {
+    notify('Preencha seu nome e o nome do comércio.');
+    return;
+  }
+
+  if (!attachMerchantToUser(authenticatedUser, details)) {
+    notify('Não foi possível criar o perfil desta loja.');
+    return;
+  }
+
+  render();
+  notify('Loja cadastrada. Bem-vindo ao painel!');
+}
+
 function switchAuth(type) {
   document.querySelectorAll('[data-auth]').forEach((button) => {
     button.classList.toggle('selected', button.dataset.auth === type);
@@ -419,14 +483,10 @@ async function loginMerchant(event) {
     return;
   }
 
-  if (!attachMerchantToUser(user)) {
-    await window.pedeiaSupabase.auth.signOut();
-    notify('Conta autenticada, mas sem perfil de loja cadastrado.');
-    return;
-  }
-
   authenticatedUser = user;
+  const hasMerchant = attachMerchantToUser(user);
   render();
+  if (!hasMerchant) notify('Conta autenticada. Complete o cadastro da loja para abrir o painel.');
 }
 
 function nav(view, icon, text, count = '') {
