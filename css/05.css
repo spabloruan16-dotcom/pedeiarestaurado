@@ -1,0 +1,116 @@
+
+/* =========================================================
+   05) Base global da aplicação
+   Define cores, fontes, reset do navegador e estilos universais.
+   Esse bloco é a base visual do projeto: ele define a identidade da
+   interface inteira e é usado por todos os outros blocos de CSS.
+========================================================= */
+
+/* :root
+   Cria as variáveis globais do projeto.
+   Mexe em toda a interface porque todos os outros estilos usam essas cores e sombras.
+   Exemplos: --coral, --green, --ink, --line.
+*/
+:root{
+  --ink:#2a1111;
+  --ink-soft:#4a1a1a;
+  --muted:#7e5c5c;
+  --line:#f1d9d9;
+  --paper:#fff8f7;
+  --panel:#ffffff;
+  --panel-soft:#fff3f2;
+  --white:#fff;
+  --coral:#d62828;
+  --coral-deep:#a61b1b;
+  --orange:#ef4444;
+  --orange-soft:#fee2e2;
+  --purple:#b91c1c;
+  --purple-deep:#7f1d1d;
+  --purple-soft:#fff1f1;
+  --blue:#dc2626;
+  --green:#16a34a;
+  --soft-coral:#fff1f1;
+  --shadow:0 18px 55px rgba(120,23,23,.08);
+  --shadow-soft:0 12px 28px rgba(120,23,23,.08);
+  --shadow-strong:0 18px 34px rgba(185,28,28,.18);
+}
+*{
+box-sizing:border-box}
+html{
+scroll-behavior:smooth}
+body{
+  margin:0;
+  background:
+    radial-gradient(circle at top left, rgba(214,40,40,.16) 0%, rgba(214,40,40,0) 26%),
+    radial-gradient(circle at bottom right, rgba(127,29,29,.12) 0%, rgba(127,29,29,0) 30%),
+    linear-gradient(180deg,#fffaf9 0%, #fff3f1 100%);
+  color:var(--ink);
+  font-family:"DM Sans",sans-serif;
+}
+button,input,textarea,select{
+  font:inherit;
+}
+button{
+  cursor:pointer;
+  border:0;
+  transition:transform .22s ease, box-shadow .22s ease, background .22s ease, border-color .22s ease, filter .22s ease;
+}
+button:hover, button:focus-visible{
+  transform:translateY(-2px);
+}
+button:active{
+  transform:translateY(0);
+}
+input, textarea, select {
+  width:100%;
+  min-height:46px;
+  padding:11px 12px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--panel);
+  color:var(--ink);
+  outline:none;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.7);
+  transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+input:focus, textarea:focus, select:focus {
+  border-color:var(--purple);
+  box-shadow:0 0 0 4px rgba(89,38,201,.08);
+}
+select {
+  appearance:none;
+  background-image:linear-gradient(45deg, transparent 50%, var(--purple) 50%), linear-gradient(135deg, var(--purple) 50%, transparent 50%);
+  background-position:calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px);
+  background-size:6px 6px, 6px 6px;
+  background-repeat:no-repeat;
+  padding-right:38px;
+}
+a{
+  text-decoration:none;
+color:inherit}
+.shell{
+  display:flex;
+min-height:100vh}
+
+.primary-button,
+.secondary-button,
+.outline-button,
+.filter-pills button,
+.auth-tabs button,
+.customer-tabs button,
+.category-tabs button,
+.chat-compose button,
+.share-button,
+.payment-options button,
+.checkout-button,
+.top-actions button,
+.card-actions button,
+.inline-chat button,
+.settings-link .primary-button,
+.persistent-link button,
+.missing-shop .primary-button{
+  border:1px solid rgba(255,255,255,.45);
+  box-shadow:var(--shadow-soft), inset 0 1px 0 rgba(255,255,255,.5);
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+}
