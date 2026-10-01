@@ -1,7 +1,6 @@
 const app = document.querySelector('#app');
 const toast = document.querySelector('#toast');
 const stateKey = 'pedeia-state-v5';
-const sessionKey = 'pedeia-merchant-session';
 const clientKey = 'pedeia-client-profile-v1';
 
 const weekDays = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
@@ -58,6 +57,7 @@ const blank = {
 };
 
 let state = readState();
+let authenticatedUser = null;
 
 function fingerprint(value) {
   try {
@@ -173,7 +173,52 @@ function publicShop() {
 }
 
 function merchantLogged() {
-  return sessionStorage.getItem(sessionKey) === 'active';
+  return Boolean(authenticatedUser?.email && (authenticatedUser.email_confirmed_at || authenticatedUser.confirmed_at));
+}
+
+function attachMerchantToUser(user, details = {}) {
+  const userId = user.id;
+  const email = String(user.email || '').toLowerCase();
+  const metadata = user.user_metadata || {};
+
+  if (state.merchant?.authUserId && state.merchant.authUserId !== userId) return false;
+
+  if (state.merchant?.email?.toLowerCase() === email && state.shop) {
+    state.merchant.authUserId = userId;
+    state.merchant.email = email;
+    delete state.merchant.password;
+    save();
+    return true;
+  }
+
+  const name = details.name || metadata.name;
+  const shopName = details.shopName || metadata.shopName;
+  const shopType = details.shopType || metadata.shopType || 'Loja';
+  if (!name || !shopName) return false;
+
+  state = {
+    ...structuredClone(blank),
+    merchant: { name, email, authUserId: userId },
+    shop: {
+      name: shopName,
+      type: shopType,
+      publicId: `${slug(shopName)}-${Math.random().toString(36).slice(2, 7)}`,
+      description: 'Adicione uma descricao para apresentar seu comercio.',
+      photo: '',
+      isOpen: true,
+      schedule: defaultShopSchedule()
+    },
+    categories: [],
+    products: [],
+    orders: [],
+    ratings: [],
+    messages: [],
+    cart: [],
+    orderQuery: '',
+    orderFilter: ''
+  };
+  save();
+  return true;
 }
 
 function brand() {
@@ -222,6 +267,24 @@ function render() {
 async function bootstrap() {
   await loadFromServer();
   await syncServerState();
+
+  try {
+    const { data, error } = await window.pedeiaSupabase.auth.getSession();
+    const user = data?.session?.user;
+    if (!error && user && user.email_confirmed_at && attachMerchantToUser(user)) {
+      authenticatedUser = user;
+    } else if (data?.session) {
+      await window.pedeiaSupabase.auth.signOut();
+    }
+  } catch {
+    authenticatedUser = null;
+  }
+
+  window.pedeiaSupabase.auth.onAuthStateChange((event, session) => {
+    authenticatedUser = session?.user?.email_confirmed_at ? session.user : null;
+    if (event === 'SIGNED_OUT') render();
+  });
+
   render();
   startLiveRefresh();
 }
@@ -230,24 +293,8 @@ function startLiveRefresh() {
   if (window.__pedeiaLiveRefresh) return;
 
   window.__pedeiaLiveRefresh = setInterval(async () => {
-    const lojaParam = publicShop();
-
-    if (lojaParam !== null) {
-      await syncServerState();
-      if (state.shop && lojaParam === state.shop.publicId && app) {
-        customerShop();
-      }
-      return;
-    }
-
-    if (state.merchant && state.shop && app) {
-      await syncServerState();
-      if (merchantLogged()) {
-        render();
-      } else if (document.visibilityState === 'visible') {
-        render();
-      }
-    }
+    if (document.activeElement?.matches('input, textarea, select')) return;
+    await syncServerState();
   }, 1500);
 }
 
@@ -311,61 +358,74 @@ function switchAuth(type) {
   document.querySelector('#login-form').classList.toggle('hidden', type !== 'login');
 }
 
-function registerMerchant(event) {
+async function registerMerchant(event) {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
+  const name = String(data.get('name') || '').trim();
   const shopName = String(data.get('shopName') || '').trim();
   const email = String(data.get('email') || '').trim().toLowerCase();
   const password = String(data.get('password') || '');
+  const shopType = String(data.get('shopType') || 'Loja');
 
-  if (!shopName || !email || password.length < 6) {
+  if (!name || !shopName || !email || password.length < 6) {
     notify('Preencha todos os campos com dados validos.');
     return;
   }
 
-  state.merchant = {
-    name: String(data.get('name') || '').trim(),
+  const { data: authData, error } = await window.pedeiaSupabase.auth.signUp({
     email,
-    password
-  };
+    password,
+    options: { data: { name, shopName, shopType } }
+  });
 
-  state.shop = {
-    name: shopName,
-    type: String(data.get('shopType') || 'Loja'),
-    publicId: `${slug(shopName)}-${Math.random().toString(36).slice(2, 7)}`,
-    description: 'Adicione uma descricao para apresentar seu comercio.',
-    photo: '',
-    isOpen: true,
-    schedule: defaultShopSchedule()
-  };
+  if (error) {
+    notify(error.message || 'Nao foi possivel criar sua conta.');
+    return;
+  }
 
-  state.categories = [];
-  state.products = [];
-  state.orders = [];
-  state.ratings = [];
-  state.messages = [];
-  state.cart = [];
-  state.orderQuery = '';
-  state.orderFilter = '';
-  state.delivery = { pickup: true, delivery: true, pickupMinutes: 20, deliveryMinutes: 45 };
+  const user = authData.user;
+  if (!authData.session || !user?.email_confirmed_at) {
+    notify('Conta criada. Confirme seu e-mail pelo link enviado antes de entrar.');
+    return;
+  }
 
-  sessionStorage.setItem(sessionKey, 'active');
-  renderSaved();
-  notify('Conta criada. Agora personalize sua loja.');
+  if (!attachMerchantToUser(user, { name, shopName, shopType })) {
+    await window.pedeiaSupabase.auth.signOut();
+    notify('Esta conta nao pode acessar o painel desta loja.');
+    return;
+  }
+
+  authenticatedUser = user;
+  render();
+  notify('Conta criada e e-mail confirmado.');
 }
 
-function loginMerchant(event) {
+async function loginMerchant(event) {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
   const email = String(data.get('email') || '').trim().toLowerCase();
   const password = String(data.get('password') || '');
+  const { data: authData, error } = await window.pedeiaSupabase.auth.signInWithPassword({ email, password });
 
-  if (!state.merchant || email !== state.merchant.email || password !== state.merchant.password) {
-    notify('E-mail ou senha invalidos.');
+  if (error) {
+    notify(error.message.includes('not confirmed') ? 'Confirme seu e-mail pelo link enviado antes de entrar.' : 'E-mail ou senha invalidos.');
     return;
   }
 
-  sessionStorage.setItem(sessionKey, 'active');
+  const user = authData.user;
+  if (!user?.email_confirmed_at) {
+    await window.pedeiaSupabase.auth.signOut();
+    notify('Confirme seu e-mail pelo link enviado antes de entrar.');
+    return;
+  }
+
+  if (!attachMerchantToUser(user)) {
+    await window.pedeiaSupabase.auth.signOut();
+    notify('Conta autenticada, mas sem perfil de loja cadastrado.');
+    return;
+  }
+
+  authenticatedUser = user;
   render();
 }
 
@@ -500,13 +560,7 @@ function countStatus(status) {
 }
 
 function orderBoard() {
-  const query = String(state.orderQuery || '').toLowerCase();
-  const visible = state.orders.filter((order) => {
-    const text = `${order.id} ${order.customer || ''}`.toLowerCase();
-    const matchesQuery = !query || text.includes(query);
-    const matchesFilter = !state.orderFilter || order.fulfillment === state.orderFilter;
-    return matchesQuery && matchesFilter;
-  });
+  const visible = filteredOrders();
 
   return `
     <section class="page-intro board-intro">
@@ -550,6 +604,22 @@ function orderBoard() {
       </div>
     </section>
 
+    ${orderBoardResults(visible)}
+  `;
+}
+
+function filteredOrders() {
+  const query = String(state.orderQuery || '').toLowerCase();
+  return state.orders.filter((order) => {
+    const text = `${order.id} ${order.customer || ''}`.toLowerCase();
+    const matchesQuery = !query || text.includes(query);
+    const matchesFilter = !state.orderFilter || order.fulfillment === state.orderFilter;
+    return matchesQuery && matchesFilter;
+  });
+}
+
+function orderBoardResults(visible) {
+  return `
     <section class="order-board">
       <div class="board-column incoming-column">
         <header><strong>Chegando</strong><b>${visible.filter((order) => order.status === 'Aguardando').length}</b></header>
@@ -1080,7 +1150,13 @@ function bindMerchant() {
 
   document.querySelector('[data-order-search]')?.addEventListener('input', (event) => {
     state.orderQuery = event.target.value;
-    renderSaved();
+    save();
+    const board = document.querySelector('.order-board');
+    if (!board) return;
+    board.outerHTML = orderBoardResults(filteredOrders());
+    document.querySelectorAll('.order-board [data-action]').forEach((button) => {
+      button.onclick = handleAction;
+    });
   });
 
   document.querySelectorAll('[data-product]').forEach((input) => {
@@ -1244,8 +1320,8 @@ function handleAction(event) {
     return printReceipt(sample);
   }
   if (action === 'logout') {
-    sessionStorage.removeItem(sessionKey);
-    return render();
+    authenticatedUser = null;
+    return window.pedeiaSupabase.auth.signOut().then(render);
   }
   if (action === 'copy') {
     const text = shopLink();
