@@ -83,7 +83,14 @@ async function syncServerState() {
     const serverState = await response.json();
     if (!serverState || !Object.keys(serverState).length) return;
 
-    const merged = { ...blank, ...serverState };
+    const merged = {
+      ...blank,
+      ...serverState,
+      view: state.view,
+      customerView: state.customerView,
+      orderQuery: state.orderQuery,
+      orderFilter: state.orderFilter
+    };
     if (fingerprint(state) !== fingerprint(merged)) {
       state = merged;
       localStorage.setItem(stateKey, JSON.stringify(merged));
@@ -100,7 +107,14 @@ async function loadFromServer() {
     if (!response.ok) return;
     const serverState = await response.json();
     if (serverState && Object.keys(serverState).length) {
-      const merged = { ...blank, ...serverState };
+      const merged = {
+        ...blank,
+        ...serverState,
+        view: state.view,
+        customerView: state.customerView,
+        orderQuery: state.orderQuery,
+        orderFilter: state.orderFilter
+      };
       state = merged;
       localStorage.setItem(stateKey, JSON.stringify(merged));
     }
@@ -491,7 +505,20 @@ async function loginMerchant(event) {
 
 function nav(view, icon, text, count = '') {
   const badge = Number(count || 0);
-  return `<button class="${state.view === view ? 'active' : ''}" data-view="${view}"><span class="nav-icon ${icon}"></span>${text}${badge > 0 ? `<b class="nav-badge">${badge}</b>` : ''}</button>`;
+  return `<button class="${state.view === view ? 'active' : ''}" data-view="${view}" aria-current="${state.view === view ? 'page' : 'false'}">${navIcon(icon)}${text}${badge > 0 ? `<b class="nav-badge">${badge}</b>` : ''}</button>`;
+}
+
+function navIcon(name) {
+  const paths = {
+    orders: '<path d="M7 3.5h8l3 3V20H6V3.5h1Z"/><path d="M14.5 3.5V7H18M9 11h6M9 14h6M9 17h3"/>',
+    home: '<path d="m3.5 10 8.5-7 8.5 7"/><path d="M5.5 9v11h13V9M9.5 20v-6h5v6"/>',
+    menu: '<path d="M4 5.5h16M4 10.5h16M4 15.5h10M4 19.5h7"/>',
+    categories: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="6" height="7" rx="1.5"/><rect x="4" y="14" width="7" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
+    chat: '<path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.2-3A7.5 7.5 0 1 1 20 11.5Z"/><path d="M8.5 11.5h.01M12.5 11.5h.01M16.5 11.5h.01"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>'
+  };
+
+  return `<span class="nav-icon ${name}" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false">${paths[name] || ''}</svg></span>`;
 }
 
 function unreadMessagesCount(type = 'merchant') {
@@ -504,11 +531,15 @@ function unreadMessagesCount(type = 'merchant') {
 function merchantPanel() {
   const page = state.view;
   const revenue = state.orders.filter((order) => order.createdAt && order.createdAt > Date.now() - 86400000).reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const openDisclosures = new Set(Array.from(document.querySelectorAll('.settings-disclosure[open]'), (item) => item.dataset.disclosure));
 
   app.innerHTML = `
     <div class="shell">
       <aside class="sidebar">
-        ${brand()}
+        <div class="sidebar-header">
+          ${brand()}
+          <button class="mobile-menu-toggle" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="merchant-navigation"><span></span></button>
+        </div>
         <div class="shop-mini">
           <div class="shop-avatar">${state.shop.photo ? `<img src="${state.shop.photo}" alt="">` : esc(state.shop.name[0])}</div>
           <div>
@@ -526,7 +557,7 @@ function merchantPanel() {
           <button data-action="copy">Copiar</button>
         </div>
 
-        <nav class="side-nav">
+        <nav class="side-nav" id="merchant-navigation">
           ${nav('orders', 'orders', 'Pedidos', state.orders.length)}
           ${nav('dashboard', 'home', 'Visao geral')}
           ${nav('menu', 'menu', 'Cardapio')}
@@ -562,6 +593,9 @@ function merchantPanel() {
   `;
 
   bindMerchant();
+  document.querySelectorAll('.settings-disclosure').forEach((item) => {
+    item.open = openDisclosures.has(item.dataset.disclosure);
+  });
 }
 
 function empty(title, text) {
@@ -884,9 +918,14 @@ function printersView() {
     </section>
 
     <section class="settings-grid">
-      <article class="panel shop-editor">
-        <div class="editor-cover"><span>Print</span></div>
-        <div class="editor-body">
+      <details class="panel shop-editor settings-disclosure" data-disclosure="printer-devices">
+        <summary class="disclosure-summary">
+          <span><small>IMPRESSORAS</small><strong>Dispositivos cadastrados</strong><span>Conexões e teste de impressão</span></span>
+          <span class="disclosure-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="disclosure-body">
+          <div class="editor-cover"><span>Print</span></div>
+          <div class="editor-body">
           <p class="eyebrow">DISPOSITIVOS CADASTRADOS</p>
           ${state.printers.length ? state.printers.map((printer) => `
             <div class="printer-row">
@@ -897,10 +936,16 @@ function printersView() {
               <button class="secondary-button" data-action="connect-printer" data-printer-id="${printer.id}">${printer.status === 'Conectada' ? 'Testar' : 'Conectar'}</button>
             </div>
           `).join('') : '<p class="muted">Nenhuma impressora cadastrada.</p>'}
+          </div>
         </div>
-      </article>
+      </details>
 
-      <article class="panel operation-settings">
+      <details class="panel operation-settings settings-disclosure" data-disclosure="printer-options">
+        <summary class="disclosure-summary">
+          <span><small>CONFIGURAÇÃO</small><strong>Opções da comanda</strong><span>Formato, cópias e informações impressas</span></span>
+          <span class="disclosure-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="disclosure-body">
         <p class="eyebrow">CONFIGURACAO DA COMANDA</p>
         <label>Tipo de conexão<select data-printer-field="mode">
           <option value="bluetooth" ${state.printerConfig.mode === 'bluetooth' ? 'selected' : ''}>Bluetooth</option>
@@ -920,7 +965,8 @@ function printersView() {
         <label class="choice-row"><input type="checkbox" data-printer-field="includeFooter" ${state.printerConfig.includeFooter ? 'checked' : ''}><span><strong>Mostrar mensagem final</strong></span></label>
         <label>Mensagem final<textarea data-printer-field="footerText" rows="2">${esc(state.printerConfig.footerText || '')}</textarea></label>
         <button class="primary-button" data-action="save-printer-config">Salvar impressora</button>
-      </article>
+        </div>
+      </details>
     </section>
 
   `;
@@ -952,7 +998,12 @@ function settingsView() {
     </section>
 
     <section class="settings-grid">
-      <article class="panel shop-editor">
+      <details class="panel shop-editor settings-disclosure" data-disclosure="shop-profile">
+        <summary class="disclosure-summary">
+          <span><small>PERFIL</small><strong>Dados da loja</strong><span>Foto, nome e descrição</span></span>
+          <span class="disclosure-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="disclosure-body">
         <div class="editor-cover"><span>PedeIA</span></div>
         <div class="editor-body">
           <label>Foto da loja<input type="file" accept="image/*" data-shop-photo></label>
@@ -960,9 +1011,15 @@ function settingsView() {
           <label>Descricao<textarea data-setting="description">${esc(state.shop.description)}</textarea></label>
           <button class="primary-button" data-action="save-shop">Salvar loja</button>
         </div>
-      </article>
+        </div>
+      </details>
 
-      <article class="panel operation-settings">
+      <details class="panel operation-settings settings-disclosure" data-disclosure="shop-delivery">
+        <summary class="disclosure-summary">
+          <span><small>OPERAÇÃO</small><strong>Formas de recebimento</strong><span>Entrega, retirada e prazos</span></span>
+          <span class="disclosure-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="disclosure-body">
         <p class="eyebrow">FORMAS DE RECEBIMENTO</p>
         <label class="choice-row"><input type="checkbox" data-delivery="delivery" ${state.delivery.delivery ? 'checked' : ''}><span><strong>Delivery</strong><small>Cliente recebe no endereco informado</small></span></label>
         <label class="choice-row"><input type="checkbox" data-delivery="pickup" ${state.delivery.pickup ? 'checked' : ''}><span><strong>Retirada no local</strong><small>Cliente busca o pedido na loja</small></span></label>
@@ -974,16 +1031,23 @@ function settingsView() {
           <strong>${esc(shopLink())}</strong>
           <button class="primary-button" data-action="copy">Copiar link</button>
         </div>
-      </article>
+        </div>
+      </details>
 
-      <article class="panel schedule-settings">
+      <details class="panel schedule-settings settings-disclosure" data-disclosure="shop-hours">
+        <summary class="disclosure-summary">
+          <span><small>AGENDA</small><strong>Horários de funcionamento</strong><span>Dias e horários da semana</span></span>
+          <span class="disclosure-indicator" aria-hidden="true"></span>
+        </summary>
+        <div class="disclosure-body">
         <p class="eyebrow">HORARIOS DE FUNCIONAMENTO</p>
         <h3>Configure os dias e o horario da semana</h3>
         <div class="schedule-list">
           ${scheduleRows}
         </div>
         <button class="primary-button" data-action="save-shop-hours">Salvar horarios</button>
-      </article>
+        </div>
+      </details>
     </section>
   `;
 }
@@ -1190,6 +1254,15 @@ function missingShop() {
 }
 
 function bindMerchant() {
+  const menuToggle = document.querySelector('.mobile-menu-toggle');
+  const sideNav = document.querySelector('.side-nav');
+  menuToggle?.addEventListener('click', () => {
+    const isOpen = sideNav.classList.toggle('open');
+    menuToggle.classList.toggle('active', isOpen);
+    menuToggle.setAttribute('aria-expanded', String(isOpen));
+    menuToggle.setAttribute('aria-label', isOpen ? 'Fechar menu' : 'Abrir menu');
+  });
+
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.onclick = () => {
       state.view = button.dataset.view;
@@ -1342,7 +1415,9 @@ function handleAction(event) {
       status: 'Disponivel',
       default: false
     });
-    return renderSaved();
+    renderSaved();
+    document.querySelector('[data-disclosure="printer-devices"]')?.setAttribute('open', '');
+    return;
   }
   if (action === 'connect-printer') {
     const target = state.printers.find((printer) => printer.id === button.dataset.printerId);
