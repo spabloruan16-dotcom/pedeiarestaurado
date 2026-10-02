@@ -64,6 +64,7 @@ let verifiedSubscription = null;
 let subscriptionCheckLoading = new URLSearchParams(location.search).has('loja');
 let subscriptionCheckError = false;
 let lastSubscriptionCheck = 0;
+let lastMerchantSync = 0;
 
 function fingerprint(value) {
   try {
@@ -105,6 +106,14 @@ function selectUserState(user) {
 }
 
 async function syncServerState() {
+  if (publicShop() !== null) return;
+  if (authenticatedUser) {
+    if (Date.now() - lastMerchantSync < 30000) return;
+    lastMerchantSync = Date.now();
+    await loadMerchantState();
+    return;
+  }
+
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
     if (!response.ok) return;
@@ -158,6 +167,66 @@ async function loadFromServer() {
   }
 }
 
+async function merchantStateRequest(method = 'GET', body) {
+  const { data, error } = await window.pedeiaSupabase.auth.getSession();
+  const accessToken = data?.session?.access_token;
+  if (error || !accessToken) throw new Error('Sua sessão expirou. Entre novamente.');
+
+  const response = await fetch('/api/merchant-state', {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {})
+    },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Não foi possível acessar os dados da loja.');
+  return result;
+}
+
+async function loadMerchantState() {
+  try {
+    const saved = await merchantStateRequest();
+    if (!saved.merchant) return false;
+
+    const previousShop = state.shop;
+    state = {
+      ...state,
+      ...saved,
+      shop: saved.shop ? {
+        ...previousShop,
+        ...saved.shop,
+        schedule: previousShop?.schedule || defaultShopSchedule()
+      } : null,
+      delivery: { ...state.delivery, ...(saved.delivery || {}) }
+    };
+    localStorage.setItem(stateKey, JSON.stringify(state));
+    return true;
+  } catch (error) {
+    notify(error.message);
+    return null;
+  }
+}
+
+async function loadPublicShopFromDatabase() {
+  try {
+    const response = await fetch(`/api/public-shop?loja=${encodeURIComponent(publicShop())}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error('Nao foi possivel carregar esta loja.');
+    const saved = await response.json();
+    state = {
+      ...state,
+      ...saved,
+      shop: { ...state.shop, ...saved.shop },
+      delivery: { ...state.delivery, ...(saved.delivery || {}) }
+    };
+    return true;
+  } catch {
+    subscriptionCheckError = true;
+    return false;
+  }
+}
+
 function save() {
   try {
     localStorage.setItem(stateKey, JSON.stringify(state));
@@ -165,15 +234,16 @@ function save() {
     // ignore storage quota issues
   }
 
-  try {
-    fetch('/api/save-state', {
+  const persist = authenticatedUser
+    ? merchantStateRequest('PUT', state)
+    : fetch('/api/save-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state)
-    }).catch(() => {});
-  } catch {
-    // ignore network failures
-  }
+    }).then(async (response) => {
+      if (!response.ok) throw new Error('Não foi possível salvar os dados.');
+    });
+  return persist.catch((error) => notify(error.message || 'Falha ao salvar os dados.'));
 }
 
 function money(value) {
@@ -264,7 +334,7 @@ function merchantLogged() {
   return Boolean(authenticatedUser?.email && (authenticatedUser.email_confirmed_at || authenticatedUser.confirmed_at));
 }
 
-function attachMerchantToUser(user, details = {}) {
+async function attachMerchantToUser(user, details = {}) {
   const userId = user.id;
   const email = String(user.email || '').toLowerCase();
   const metadata = user.user_metadata || {};
@@ -274,7 +344,7 @@ function attachMerchantToUser(user, details = {}) {
   if (state.merchant?.authUserId === userId && state.shop) {
     state.merchant.email = email;
     delete state.merchant.password;
-    save();
+    await save();
     return true;
   }
 
@@ -282,7 +352,7 @@ function attachMerchantToUser(user, details = {}) {
     state.merchant.authUserId = userId;
     state.merchant.email = email;
     delete state.merchant.password;
-    save();
+    await save();
     return true;
   }
 
@@ -312,7 +382,7 @@ function attachMerchantToUser(user, details = {}) {
     orderQuery: '',
     orderFilter: ''
   };
-  save();
+  await save();
   return true;
 }
 
@@ -365,14 +435,18 @@ function render() {
 
 async function bootstrap() {
   await loadFromServer();
-  await syncServerState();
-
   if (publicShop() !== null) {
+    if (!await loadPublicShopFromDatabase()) {
+      render();
+      startLiveRefresh();
+      return;
+    }
     await refreshShopSubscription();
     render();
     startLiveRefresh();
     return;
   }
+  await syncServerState();
 
   try {
     const { data, error } = await window.pedeiaSupabase.auth.getSession();
@@ -380,7 +454,8 @@ async function bootstrap() {
     if (!error && user && user.email_confirmed_at) {
       authenticatedUser = user;
       selectUserState(user);
-      attachMerchantToUser(user);
+      const saved = await loadMerchantState();
+      if (saved === false) await attachMerchantToUser(user);
     } else if (data?.session) {
       await window.pedeiaSupabase.auth.signOut();
     }
@@ -405,8 +480,14 @@ function startLiveRefresh() {
 
   window.__pedeiaLiveRefresh = setInterval(async () => {
     if (document.activeElement?.matches('input, textarea, select')) return;
+    if (publicShop() !== null) {
+      if (Date.now() - lastSubscriptionCheck >= 30000) {
+        if (await loadPublicShopFromDatabase()) await refreshShopSubscription();
+      }
+      return;
+    }
     await syncServerState();
-    if (publicShop() !== null && Date.now() - lastSubscriptionCheck >= 30000) {
+    if (authenticatedUser) {
       await refreshShopSubscription();
     }
   }, 1500);
@@ -526,7 +607,7 @@ function shopSetupView() {
   };
 }
 
-function finishShopSetup(event) {
+async function finishShopSetup(event) {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
   const details = {
@@ -540,7 +621,7 @@ function finishShopSetup(event) {
     return;
   }
 
-  if (!attachMerchantToUser(authenticatedUser, details)) {
+  if (!await attachMerchantToUser(authenticatedUser, details)) {
     notify('Não foi possível criar o perfil desta loja.');
     return;
   }
@@ -590,7 +671,7 @@ async function registerMerchant(event) {
 
   authenticatedUser = user;
   selectUserState(user);
-  if (!attachMerchantToUser(user, { name, shopName, shopType })) {
+  if (!await attachMerchantToUser(user, { name, shopName, shopType })) {
     authenticatedUser = null;
     stateKey = baseStateKey;
     await window.pedeiaSupabase.auth.signOut();
@@ -623,9 +704,10 @@ async function loginMerchant(event) {
 
   authenticatedUser = user;
   selectUserState(user);
-  const hasMerchant = attachMerchantToUser(user);
+  const saved = await loadMerchantState();
+  const hasMerchant = saved === true || (saved === false && await attachMerchantToUser(user));
   render();
-  if (!hasMerchant) notify('Conta autenticada. Complete o cadastro da loja para abrir o painel.');
+  if (saved === false && !hasMerchant) notify('Conta autenticada. Complete o cadastro da loja para abrir o painel.');
 }
 
 function nav(view, icon, text, count = '') {
@@ -1380,13 +1462,17 @@ function missingShop() {
 }
 
 function subscriptionPendingView() {
+  const status = shopSubscriptionStatus().replaceAll('-', '_').replaceAll(' ', '_');
+  const expiresAt = verifiedSubscription?.fim_assinatura || state.shop?.subscriptionExpiresAt || state.shop?.subscription_expires_at;
+  const expired = ['expired', 'expirada', 'incomplete_expired'].includes(status) ||
+    (expiresAt && Number.isFinite(Date.parse(expiresAt)) && Date.parse(expiresAt) < Date.now());
   app.innerHTML = `
     <main class="subscription-pending">
       <section class="subscription-pending-panel" role="status" aria-live="polite">
         <span class="subscription-pending-icon" aria-hidden="true">!</span>
         <p class="eyebrow">LOJA TEMPORARIAMENTE INDISPONÍVEL</p>
-        <h1>Assinatura pendente</h1>
-        <p>A assinatura de <strong>${esc(state.shop?.name || 'esta loja')}</strong> está pendente. Para voltar a fazer pedidos, o responsável pela loja precisa renovar a assinatura.</p>
+        <h1>${expired ? 'Assinatura expirada' : 'Assinatura pendente'}</h1>
+        <p>${expired ? 'O período da assinatura de' : 'A assinatura de'} <strong>${esc(state.shop?.name || 'esta loja')}</strong> ${expired ? 'expirou' : 'está pendente'}. Para voltar a fazer pedidos, o responsável pela loja precisa renovar a assinatura.</p>
         <a class="primary-button" href="/">Entendi</a>
       </section>
     </main>
