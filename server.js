@@ -1,11 +1,18 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+require("dotenv").config();
+const { Pool } = require("pg");
 
 const port = Number(process.env.PORT || 4173);
 const root = __dirname;
 const dataDir = path.join(root, "server");
 const stateFile = path.join(dataDir, "data.json");
+const subscriptionPool = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 5000
+}) : null;
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -79,6 +86,49 @@ http.createServer((request, response) => {
   if (pathname === "/api/state") {
     response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     response.end(JSON.stringify(readStateFile()));
+    return;
+  }
+
+  if (pathname === "/api/shop-subscription") {
+    const publicId = url.searchParams.get("loja");
+    const state = readStateFile();
+    if (!publicId || publicId !== state.shop?.publicId) {
+      response.writeHead(404, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({ error: "Loja nao encontrada" }));
+      return;
+    }
+    if (!subscriptionPool) {
+      response.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({ error: "Verificacao de assinatura indisponivel" }));
+      return;
+    }
+
+    const merchantId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(state.merchant?.authUserId || "")
+      ? state.merchant.authUserId
+      : null;
+    const email = String(state.merchant?.email || "").trim().toLowerCase() || null;
+    subscriptionPool.query(
+      `SELECT status_assinatura, fim_assinatura
+       FROM public.comerciantes
+       WHERE ($1::uuid IS NOT NULL AND id = $1::uuid)
+          OR ($2::text IS NOT NULL AND lower(email) = $2::text)
+       ORDER BY CASE WHEN id = $1::uuid THEN 0 ELSE 1 END
+       LIMIT 1`,
+      [merchantId, email]
+    ).then(({ rows }) => {
+      const subscription = rows[0];
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({
+        status_assinatura: subscription?.status_assinatura || "pendente",
+        fim_assinatura: subscription?.fim_assinatura || null
+      }));
+    }).catch((error) => {
+      console.error("Falha ao verificar assinatura da loja:", error.message);
+      if (!response.headersSent) {
+        response.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ error: "Verificacao de assinatura indisponivel" }));
+      }
+    });
     return;
   }
 

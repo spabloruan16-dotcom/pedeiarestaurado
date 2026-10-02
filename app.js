@@ -1,6 +1,7 @@
 const app = document.querySelector('#app');
 const toast = document.querySelector('#toast');
-const stateKey = 'pedeia-state-v5';
+const baseStateKey = 'pedeia-state-v5';
+let stateKey = baseStateKey;
 const clientKey = 'pedeia-client-profile-v1';
 
 const weekDays = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
@@ -57,7 +58,12 @@ const blank = {
 };
 
 let state = readState();
+const initialLocalState = state;
 let authenticatedUser = null;
+let verifiedSubscription = null;
+let subscriptionCheckLoading = new URLSearchParams(location.search).has('loja');
+let subscriptionCheckError = false;
+let lastSubscriptionCheck = 0;
 
 function fingerprint(value) {
   try {
@@ -76,12 +82,41 @@ function readState() {
   }
 }
 
+function selectUserState(user) {
+  if (!user?.id) return;
+
+  const email = String(user.email || '').toLowerCase();
+  const ownsState = (candidate) => candidate?.merchant && candidate.shop && (
+    candidate.merchant.authUserId === user.id ||
+    (!candidate.merchant.authUserId && candidate.merchant.email?.toLowerCase() === email)
+  );
+  const userStateKey = `${baseStateKey}:${user.id}`;
+  let savedState = null;
+
+  try {
+    savedState = JSON.parse(localStorage.getItem(userStateKey) || 'null');
+  } catch {
+    savedState = null;
+  }
+
+  stateKey = userStateKey;
+  if (ownsState(savedState)) state = { ...blank, ...savedState };
+  else if (ownsState(initialLocalState)) state = { ...blank, ...initialLocalState };
+}
+
 async function syncServerState() {
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
     if (!response.ok) return;
     const serverState = await response.json();
     if (!serverState || !Object.keys(serverState).length) return;
+
+    if (authenticatedUser) {
+      const serverUserId = serverState.merchant?.authUserId;
+      const matchesUser = serverUserId === authenticatedUser.id ||
+        (!serverUserId && serverState.merchant?.email?.toLowerCase() === authenticatedUser.email?.toLowerCase());
+      if (!matchesUser) return;
+    }
 
     const merged = {
       ...blank,
@@ -186,6 +221,45 @@ function publicShop() {
   return new URLSearchParams(location.search).get('loja');
 }
 
+function shopSubscriptionStatus() {
+  const status = verifiedSubscription?.status_assinatura ??
+    state.shop?.subscriptionStatus ??
+    state.shop?.subscription_status ??
+    state.shop?.paymentStatus ??
+    state.shop?.payment_status ??
+    state.shop?.planStatus ??
+    state.shop?.plan_status ??
+    state.shop?.status ??
+    state.shop?.subscription?.status ??
+    state.shop?.assinatura?.status ??
+    state.subscription?.status ??
+    state.subscriptionStatus ??
+    state.subscription_status ??
+    state.paymentStatus ??
+    state.billing?.status ??
+    state.merchant?.subscriptionStatus ??
+    state.merchant?.subscription_status ??
+    state.merchant?.status ??
+    state.merchant?.paymentStatus ??
+    state.merchant?.payment_status ??
+    state.merchant?.assinatura?.status;
+  return String(status || 'active').trim().toLowerCase();
+}
+
+function shopSubscriptionBlocked() {
+  const status = shopSubscriptionStatus().replaceAll('-', '_').replaceAll(' ', '_');
+  const expiresAt = verifiedSubscription?.fim_assinatura ??
+    state.shop?.subscriptionExpiresAt ??
+    state.shop?.subscription_expires_at ??
+    state.shop?.expiresAt ??
+    state.shop?.expires_at ??
+    state.subscription?.expiresAt ??
+    state.subscription?.expires_at;
+  const isExpired = expiresAt && Number.isFinite(Date.parse(expiresAt)) && Date.parse(expiresAt) < Date.now();
+
+  return isExpired || ['pending', 'pendente', 'past_due', 'overdue', 'expired', 'expirada', 'incomplete_expired', 'unpaid', 'suspended', 'suspensa', 'canceled', 'cancelled', 'cancelada'].includes(status);
+}
+
 function merchantLogged() {
   return Boolean(authenticatedUser?.email && (authenticatedUser.email_confirmed_at || authenticatedUser.confirmed_at));
 }
@@ -196,6 +270,13 @@ function attachMerchantToUser(user, details = {}) {
   const metadata = user.user_metadata || {};
 
   if (state.merchant?.authUserId && state.merchant.authUserId !== userId) return false;
+
+  if (state.merchant?.authUserId === userId && state.shop) {
+    state.merchant.email = email;
+    delete state.merchant.password;
+    save();
+    return true;
+  }
 
   if (state.merchant?.email?.toLowerCase() === email && state.shop) {
     state.merchant.authUserId = userId;
@@ -267,7 +348,10 @@ function ensureDemoData() {
 function render() {
   const lojaParam = publicShop();
   if (lojaParam !== null) {
-    return lojaParam === state.shop?.publicId ? customerShop() : missingShop();
+    if (subscriptionCheckLoading) return subscriptionCheckingView();
+    if (subscriptionCheckError) return subscriptionUnavailableView();
+    if (lojaParam !== state.shop?.publicId) return missingShop();
+    return shopSubscriptionBlocked() ? subscriptionPendingView() : customerShop();
   }
 
   if (!state.shop && !state.merchant) {
@@ -283,11 +367,19 @@ async function bootstrap() {
   await loadFromServer();
   await syncServerState();
 
+  if (publicShop() !== null) {
+    await refreshShopSubscription();
+    render();
+    startLiveRefresh();
+    return;
+  }
+
   try {
     const { data, error } = await window.pedeiaSupabase.auth.getSession();
     const user = data?.session?.user;
     if (!error && user && user.email_confirmed_at) {
       authenticatedUser = user;
+      selectUserState(user);
       attachMerchantToUser(user);
     } else if (data?.session) {
       await window.pedeiaSupabase.auth.signOut();
@@ -298,7 +390,10 @@ async function bootstrap() {
 
   window.pedeiaSupabase.auth.onAuthStateChange((event, session) => {
     authenticatedUser = session?.user?.email_confirmed_at ? session.user : null;
-    if (event === 'SIGNED_OUT') render();
+    if (event === 'SIGNED_OUT') {
+      stateKey = baseStateKey;
+      render();
+    }
   });
 
   render();
@@ -311,7 +406,32 @@ function startLiveRefresh() {
   window.__pedeiaLiveRefresh = setInterval(async () => {
     if (document.activeElement?.matches('input, textarea, select')) return;
     await syncServerState();
+    if (publicShop() !== null && Date.now() - lastSubscriptionCheck >= 30000) {
+      await refreshShopSubscription();
+    }
   }, 1500);
+}
+
+async function refreshShopSubscription() {
+  const publicId = publicShop();
+  if (!publicId) return;
+
+  subscriptionCheckLoading = true;
+  subscriptionCheckError = false;
+  render();
+
+  try {
+    const response = await fetch(`/api/shop-subscription?loja=${encodeURIComponent(publicId)}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error('subscription check failed');
+    verifiedSubscription = await response.json();
+    lastSubscriptionCheck = Date.now();
+  } catch {
+    verifiedSubscription = null;
+    subscriptionCheckError = true;
+  } finally {
+    subscriptionCheckLoading = false;
+    render();
+  }
 }
 
 function authView() {
@@ -401,6 +521,7 @@ function shopSetupView() {
   document.querySelector('#shop-setup-form').onsubmit = finishShopSetup;
   document.querySelector('[data-setup-logout]').onclick = () => {
     authenticatedUser = null;
+    stateKey = baseStateKey;
     window.pedeiaSupabase.auth.signOut().then(render);
   };
 }
@@ -467,13 +588,16 @@ async function registerMerchant(event) {
     return;
   }
 
+  authenticatedUser = user;
+  selectUserState(user);
   if (!attachMerchantToUser(user, { name, shopName, shopType })) {
+    authenticatedUser = null;
+    stateKey = baseStateKey;
     await window.pedeiaSupabase.auth.signOut();
     notify('Esta conta nao pode acessar o painel desta loja.');
     return;
   }
 
-  authenticatedUser = user;
   render();
   notify('Conta criada e e-mail confirmado.');
 }
@@ -498,6 +622,7 @@ async function loginMerchant(event) {
   }
 
   authenticatedUser = user;
+  selectUserState(user);
   const hasMerchant = attachMerchantToUser(user);
   render();
   if (!hasMerchant) notify('Conta autenticada. Complete o cadastro da loja para abrir o painel.');
@@ -1053,6 +1178,7 @@ function settingsView() {
 }
 
 function customerShop() {
+  if (shopSubscriptionBlocked()) return subscriptionPendingView();
   if (!state.shop) return missingShop();
   const total = state.cart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
   const cached = JSON.parse(localStorage.getItem(clientKey) || 'null') || {};
@@ -1251,6 +1377,48 @@ function missingShop() {
       </div>
     </main>
   `;
+}
+
+function subscriptionPendingView() {
+  app.innerHTML = `
+    <main class="subscription-pending">
+      <section class="subscription-pending-panel" role="status" aria-live="polite">
+        <span class="subscription-pending-icon" aria-hidden="true">!</span>
+        <p class="eyebrow">LOJA TEMPORARIAMENTE INDISPONÍVEL</p>
+        <h1>Assinatura pendente</h1>
+        <p>A assinatura de <strong>${esc(state.shop?.name || 'esta loja')}</strong> está pendente. Para voltar a fazer pedidos, o responsável pela loja precisa renovar a assinatura.</p>
+        <a class="primary-button" href="/">Entendi</a>
+      </section>
+    </main>
+  `;
+}
+
+function subscriptionCheckingView() {
+  app.innerHTML = `
+    <main class="subscription-pending">
+      <section class="subscription-pending-panel" role="status" aria-live="polite">
+        <span class="subscription-pending-icon" aria-hidden="true">...</span>
+        <p class="eyebrow">AGUARDE UM INSTANTE</p>
+        <h1>Verificando assinatura</h1>
+        <p>Estamos confirmando se esta loja está liberada para receber pedidos.</p>
+      </section>
+    </main>
+  `;
+}
+
+function subscriptionUnavailableView() {
+  app.innerHTML = `
+    <main class="subscription-pending">
+      <section class="subscription-pending-panel" role="alert">
+        <span class="subscription-pending-icon" aria-hidden="true">!</span>
+        <p class="eyebrow">ACESSO TEMPORARIAMENTE INDISPONÍVEL</p>
+        <h1>Não foi possível confirmar</h1>
+        <p>Não conseguimos verificar a assinatura desta loja agora. Tente novamente em alguns instantes.</p>
+        <button class="primary-button" type="button" data-action="retry-subscription">Tentar novamente</button>
+      </section>
+    </main>
+  `;
+  document.querySelector('[data-action="retry-subscription"]')?.addEventListener('click', refreshShopSubscription);
 }
 
 function bindMerchant() {
@@ -1456,6 +1624,7 @@ function handleAction(event) {
   }
   if (action === 'logout') {
     authenticatedUser = null;
+    stateKey = baseStateKey;
     return window.pedeiaSupabase.auth.signOut().then(render);
   }
   if (action === 'copy') {
