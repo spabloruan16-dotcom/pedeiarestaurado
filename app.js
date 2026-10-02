@@ -60,6 +60,8 @@ const blank = {
 let state = readState();
 const initialLocalState = state;
 let authenticatedUser = null;
+let isAdmin = false;
+let adminMerchants = [];
 let verifiedSubscription = null;
 let subscriptionCheckLoading = new URLSearchParams(location.search).has('loja');
 let subscriptionCheckError = false;
@@ -429,8 +431,46 @@ function render() {
   }
 
   if (!merchantLogged()) return authView();
+  if (isAdmin) return adminPanel();
   if (!state.merchant || !state.shop || state.merchant.authUserId !== authenticatedUser.id) return shopSetupView();
   merchantPanel();
+}
+
+async function adminRequest(path, method = 'GET', body) {
+  const { data, error } = await window.pedeiaSupabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (error || !token) throw new Error('Sua sessao expirou. Entre novamente.');
+  const response = await fetch(path, { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Falha no acesso administrativo.');
+  return result;
+}
+
+async function checkAdmin() {
+  try { await adminRequest('/api/admin/session'); isAdmin = true; return true; }
+  catch (error) { isAdmin = false; if (error.message.includes('Acesso restrito')) return false; return false; }
+}
+
+async function loadAdminMerchants() {
+  const result = await adminRequest('/api/admin/merchants');
+  adminMerchants = result.merchants || [];
+}
+
+function adminPanel() {
+  const active = adminMerchants.filter(m => m.status_assinatura === 'ativa' && (!m.fim_assinatura || Date.parse(m.fim_assinatura) >= Date.now())).length;
+  const pending = adminMerchants.filter(m => m.status_assinatura === 'pendente').length;
+  const expired = adminMerchants.filter(m => m.status_assinatura !== 'ativa' || (m.fim_assinatura && Date.parse(m.fim_assinatura) < Date.now())).length;
+  app.innerHTML = `<main class="admin-shell"><header class="admin-header"><div>${brand()}<p class="eyebrow">CENTRAL DE CONTROLE</p><h1>Painel administrativo</h1><p>Gerencie comerciantes e assinaturas do PedeIA.</p></div><div class="admin-user"><span>${esc(authenticatedUser?.email || '')}</span><button class="secondary-button" data-action="logout">Sair</button></div></header><section class="admin-stats"><article><span>Comerciantes</span><strong>${adminMerchants.length}</strong></article><article><span>Assinaturas ativas</span><strong>${active}</strong></article><article><span>Pendentes</span><strong>${pending}</strong></article><article><span>Expiradas / suspensas</span><strong>${expired}</strong></article></section><section class="admin-list"><div class="admin-list-heading"><div><h2>Comerciantes</h2><p>Ative, renove ou suspenda o acesso.</p></div><button class="secondary-button" data-admin-refresh>Atualizar</button></div>${adminMerchants.length ? adminMerchants.map(m => { const exp = m.fim_assinatura ? new Date(m.fim_assinatura).toLocaleDateString('pt-BR') : 'Sem prazo'; const live = m.status_assinatura === 'ativa' && (!m.fim_assinatura || Date.parse(m.fim_assinatura) >= Date.now()); return `<article class="admin-merchant"><div class="admin-merchant-info"><strong>${esc(m.nome || 'Comerciante')}</strong><span>${esc(m.email || '')}</span><small>${esc(m.loja_nome || 'Loja ainda não cadastrada')} · ${Number(m.total_pedidos || 0)} pedidos</small></div><div class="admin-merchant-status"><b class="admin-status ${live ? 'active' : m.status_assinatura === 'pendente' ? 'pending' : 'blocked'}">${live ? 'Ativa' : esc(m.status_assinatura || 'pendente')}</b><small>Vencimento: ${exp}</small></div><div class="admin-actions"><button class="primary-button" data-admin-status="ativa" data-admin-id="${m.id}">Ativar 30 dias</button><button class="secondary-button" data-admin-status="suspensa" data-admin-id="${m.id}">Suspender</button><button class="secondary-button" data-admin-status="pendente" data-admin-id="${m.id}">Pendente</button></div></article>`; }).join('') : '<p class="admin-empty">Nenhum comerciante cadastrado ainda.</p>'}</section></main>`;
+  document.querySelector('[data-admin-refresh]')?.addEventListener('click', async () => { try { await loadAdminMerchants(); adminPanel(); } catch (e) { notify(e.message); } });
+  document.querySelectorAll('[data-admin-status]').forEach(button => button.addEventListener('click', async () => {
+    const id = button.dataset.adminId, status = button.dataset.adminStatus;
+    const actionLabel = status === 'ativa' ? 'ativar por 30 dias' : status === 'suspensa' ? 'suspender' : 'marcar como pendente';
+    if (!confirm(`Deseja ${actionLabel} a assinatura deste comerciante?`)) return;
+    button.disabled = true;
+    try { await adminRequest(`/api/admin/merchants/${encodeURIComponent(id)}/subscription`, 'PATCH', { status, days: 30 }); await loadAdminMerchants(); adminPanel(); notify('Assinatura atualizada com sucesso.'); }
+    catch (e) { button.disabled = false; notify(e.message); }
+  }));
+  document.querySelector('[data-action="logout"]')?.addEventListener('click', () => window.pedeiaSupabase.auth.signOut());
 }
 
 async function bootstrap() {
@@ -453,9 +493,7 @@ async function bootstrap() {
     const user = data?.session?.user;
     if (!error && user && user.email_confirmed_at) {
       authenticatedUser = user;
-      selectUserState(user);
-      const saved = await loadMerchantState();
-      if (saved === false) await attachMerchantToUser(user);
+      if (await checkAdmin()) { await loadAdminMerchants(); } else { selectUserState(user); const saved = await loadMerchantState(); if (saved === false) await attachMerchantToUser(user); }
     } else if (data?.session) {
       await window.pedeiaSupabase.auth.signOut();
     }
@@ -465,9 +503,12 @@ async function bootstrap() {
 
   window.pedeiaSupabase.auth.onAuthStateChange((event, session) => {
     authenticatedUser = session?.user?.email_confirmed_at ? session.user : null;
+    isAdmin = false;
     if (event === 'SIGNED_OUT') {
       stateKey = baseStateKey;
       render();
+    } else if (authenticatedUser) {
+      checkAdmin().then(async (admin) => { if (admin) { try { await loadAdminMerchants(); } catch (e) { notify(e.message); } } render(); });
     }
   });
 
@@ -703,6 +744,11 @@ async function loginMerchant(event) {
   }
 
   authenticatedUser = user;
+  if (await checkAdmin()) {
+    try { await loadAdminMerchants(); render(); notify('Bem-vindo ao painel administrativo.'); }
+    catch (e) { notify(e.message); }
+    return;
+  }
   selectUserState(user);
   const saved = await loadMerchantState();
   const hasMerchant = saved === true || (saved === false && await attachMerchantToUser(user));

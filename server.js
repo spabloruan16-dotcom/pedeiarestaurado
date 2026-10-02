@@ -312,6 +312,17 @@ async function saveMerchantState(user, data) {
   }
 }
 
+async function requireAdmin(request) {
+  const user = await authenticatedUser(request);
+  if (!user) return { error: "Sessao invalida ou email nao confirmado", status: 401 };
+  if (!subscriptionPool) return { error: "Banco de dados indisponivel", status: 503 };
+  const result = await subscriptionPool.query(
+    "SELECT role FROM public.admin_roles WHERE user_id = $1 LIMIT 1", [user.id]
+  );
+  if (result.rows[0]?.role !== "admin") return { error: "Acesso restrito ao administrador", status: 403 };
+  return { user };
+}
+
 http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const pathname = url.pathname;
@@ -325,6 +336,47 @@ http.createServer((request, response) => {
   if (pathname === "/api/state") {
     response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     response.end(JSON.stringify(readStateFile()));
+    return;
+  }
+
+  if (pathname === "/api/admin/session" || pathname === "/api/admin/merchants" || /^\/api\/admin\/merchants\/[0-9a-f-]+\/subscription$/i.test(pathname)) {
+    (async () => {
+      const auth = await requireAdmin(request);
+      if (auth.error) return respondJson(response, auth.status, { error: auth.error });
+      if (pathname === "/api/admin/session" && request.method === "GET") {
+        return respondJson(response, 200, { isAdmin: true, user: { id: auth.user.id, email: auth.user.email } });
+      }
+      if (pathname === "/api/admin/merchants" && request.method === "GET") {
+        const result = await subscriptionPool.query(
+          `SELECT c.id, c.nome, c.email, c.status_assinatura, c.inicio_assinatura, c.fim_assinatura,
+                  l.nome AS loja_nome, l.public_id,
+                  (SELECT COUNT(*)::int FROM public.pedidos p WHERE p.loja_id = l.id) AS total_pedidos
+           FROM public.comerciantes c
+           LEFT JOIN LATERAL (SELECT * FROM public.lojas WHERE merchant_id = c.id ORDER BY created_at LIMIT 1) l ON TRUE
+           ORDER BY c.created_at DESC`
+        );
+        return respondJson(response, 200, { merchants: result.rows });
+      }
+      const match = pathname.match(/^\/api\/admin\/merchants\/([0-9a-f-]+)\/subscription$/i);
+      if (match && request.method === "PATCH") {
+        const body = await readRequestJson(request);
+        const status = String(body.status || "");
+        const allowed = ["ativa", "pendente", "expirada", "suspensa"];
+        if (!allowed.includes(status)) return respondJson(response, 400, { error: "Status de assinatura invalido" });
+        const days = Number(body.days ?? 30);
+        if (!Number.isInteger(days) || days < 1 || days > 3650) return respondJson(response, 400, { error: "Prazo deve ser entre 1 e 3650 dias" });
+        const result = status === "ativa"
+          ? await subscriptionPool.query(`UPDATE public.comerciantes SET status_assinatura=$1, inicio_assinatura=NOW(), fim_assinatura=$2, updated_at=NOW() WHERE id=$3 RETURNING id, nome, email, status_assinatura, fim_assinatura`, [status, new Date(Date.now() + days * 86400000), match[1]])
+          : await subscriptionPool.query(`UPDATE public.comerciantes SET status_assinatura=$1, fim_assinatura=NULL, updated_at=NOW() WHERE id=$2 RETURNING id, nome, email, status_assinatura, fim_assinatura`, [status, match[1]]);
+        if (!result.rowCount) return respondJson(response, 404, { error: "Comerciante nao encontrado" });
+        return respondJson(response, 200, { ok: true, merchant: result.rows[0] });
+      }
+      response.setHeader("Allow", "GET, PATCH");
+      return respondJson(response, 405, { error: "Metodo nao permitido" });
+    })().catch((error) => {
+      console.error("Falha na rota administrativa:", error.message);
+      if (!response.headersSent) respondJson(response, 500, { error: "Nao foi possivel concluir a operacao administrativa" });
+    });
     return;
   }
 
