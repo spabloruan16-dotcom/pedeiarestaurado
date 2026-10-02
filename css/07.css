@@ -1049,3 +1049,28 @@ select:focus {
 .admin-empty { color:var(--muted); padding:20px 0; }
 @media(max-width:760px) { .admin-shell{padding:22px 14px 40px}.admin-header{flex-direction:column}.admin-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.admin-merchant{grid-template-columns:1fr 1fr}.admin-actions{grid-column:1/-1}.admin-list{padding:15px} }
 @media(max-width:420px) { .admin-merchant{grid-template-columns:1fr}.admin-actions{grid-column:auto}.admin-actions button{flex:1} }
+
+/* Central de atendimento e cobrança */
+.support-admin { margin-top:22px; }
+.support-layout { display:grid; grid-template-columns:minmax(230px,0.85fr) minmax(0,1.5fr); gap:18px; margin-top:14px; }
+.support-list,.support-conversation { min-width:0; }
+.support-list h3,.support-conversation h3,.support-new h3 { margin:0 0 12px; font:700 16px "Space Grotesk",sans-serif; }
+.support-ticket { width:100%; display:grid; gap:5px; text-align:left; padding:13px; border:1px solid var(--line); border-radius:12px; background:#fff; margin-bottom:8px; color:var(--ink); cursor:pointer; }
+.support-ticket.selected { border-color:var(--brand,#f4512c); box-shadow:0 0 0 2px rgba(244,81,44,.09); }
+.support-ticket strong { font-size:13px; }
+.support-ticket small,.support-message small { color:var(--muted); font-size:11px; }
+.support-ticket span { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+.support-new { display:grid; gap:10px; border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:18px; }
+.support-new label,.support-compose { display:grid; gap:7px; }
+.support-new input,.support-new textarea,.support-new select,.support-compose textarea { width:100%; border:1px solid var(--line); border-radius:9px; padding:10px; font:inherit; background:#fff; color:var(--ink); }
+.support-new textarea,.support-compose textarea { min-height:84px; resize:vertical; }
+.support-conversation { border:1px solid var(--line); border-radius:12px; padding:15px; display:flex; flex-direction:column; min-height:300px; }
+.support-messages { display:flex; flex-direction:column; gap:10px; padding:8px 0 16px; flex:1; min-height:140px; }
+.support-message { max-width:88%; align-self:flex-start; border:1px solid var(--line); border-radius:12px 12px 12px 3px; background:#f8fafc; padding:10px 12px; overflow-wrap:anywhere; }
+.support-message.support-mine { align-self:flex-end; background:#fff3ed; border-color:#fed7c3; border-radius:12px 12px 3px 12px; }
+.support-message p { margin:5px 0; white-space:pre-wrap; font-size:13px; }
+.support-message a { font-size:12px; color:var(--brand,#c2410c); }
+.support-compose { border-top:1px solid var(--line); padding-top:12px; }
+.support-file { display:block; color:var(--muted); font-size:12px; }
+.support-file input { display:block; margin-top:5px; max-width:100%; }
+@media(max-width:760px){.support-layout{grid-template-columns:1fr}.support-conversation{min-height:260px}.support-message{max-width:96%}}

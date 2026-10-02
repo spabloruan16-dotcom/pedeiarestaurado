@@ -341,10 +341,80 @@ async function requireAdmin(request) {
   return { user };
 }
 
+
+async function supportUser(request) {
+  const user = await authenticatedUser(request);
+  if (!user) return { error: "Sessao invalida ou email nao confirmado", status: 401 };
+  if (!subscriptionPool) return { error: "Banco de dados indisponivel", status: 503 };
+  return { user };
+}
+async function userIsAdmin(userId) {
+  const r = await subscriptionPool.query("SELECT 1 FROM public.admin_roles WHERE user_id=$1 AND role='admin' LIMIT 1", [userId]);
+  return r.rowCount > 0;
+}
+async function userMerchant(userId) {
+  const r = await subscriptionPool.query("SELECT id FROM public.comerciantes WHERE id=$1 LIMIT 1", [userId]);
+  return r.rows[0] || null;
+}
+async function supportMessages(id) {
+  const r = await subscriptionPool.query(`SELECT id, atendimento_id, remetente_id, remetente_tipo, conteudo, anexo_url, anexo_nome, anexo_tipo, created_at FROM public.mensagens_atendimento WHERE atendimento_id=$1 ORDER BY created_at ASC`, [id]);
+  return r.rows;
+}
+async function routeSupport(request, response, pathname) {
+  const adminPath = pathname.startsWith('/api/admin/support');
+  const auth = adminPath ? await requireAdmin(request) : await supportUser(request);
+  if (auth.error) return respondJson(response, auth.status, {error: auth.error});
+  const user = auth.user;
+  const idMatch = pathname.match(/\/([0-9a-f-]{36})\/messages$/i);
+  if (adminPath) {
+    if (pathname === '/api/admin/support' && request.method === 'GET') {
+      const r = await subscriptionPool.query(`SELECT a.id, a.comerciante_id, a.loja_id, a.tipo, a.assunto, a.status, a.created_at, a.updated_at, c.nome AS comerciante_nome, c.email, l.nome AS loja_nome, (SELECT m.conteudo FROM public.mensagens_atendimento m WHERE m.atendimento_id=a.id ORDER BY m.created_at DESC LIMIT 1) AS ultima_mensagem FROM public.atendimentos a JOIN public.comerciantes c ON c.id=a.comerciante_id LEFT JOIN public.lojas l ON l.id=a.loja_id ORDER BY a.updated_at DESC LIMIT 200`);
+      return respondJson(response, 200, {atendimentos:r.rows});
+    }
+    if (pathname === '/api/admin/support' && request.method === 'POST') {
+      const b=await readRequestJson(request); const merchantId=String(b.comerciante_id||''); const assunto=String(b.assunto||'').trim().slice(0,160); const conteudo=String(b.conteudo||'').trim().slice(0,10000); const tipo=['suporte','cobranca','geral'].includes(b.tipo)?b.tipo:'geral';
+      if (!merchantId || !assunto || !conteudo) return respondJson(response,400,{error:'Informe comerciante, assunto e mensagem'});
+      const mr=await subscriptionPool.query('SELECT id FROM public.comerciantes WHERE id=$1',[merchantId]); if(!mr.rowCount) return respondJson(response,404,{error:'Comerciante nao encontrado'});
+      const lr=await subscriptionPool.query('SELECT id FROM public.lojas WHERE merchant_id=$1 ORDER BY created_at LIMIT 1',[merchantId]);
+      const c=await subscriptionPool.query(`INSERT INTO public.atendimentos(comerciante_id,loja_id,tipo,assunto,status) VALUES($1,$2,$3,$4,'aguardando_comerciante') RETURNING *`,[merchantId,lr.rows[0]?.id||null,tipo,assunto]);
+      await subscriptionPool.query(`INSERT INTO public.mensagens_atendimento(atendimento_id,remetente_id,remetente_tipo,conteudo) VALUES($1,$2,'admin',$3)`,[c.rows[0].id,user.id,conteudo]);
+      return respondJson(response,201,{atendimento:c.rows[0]});
+    }
+    if (idMatch && request.method === 'GET') {
+      const own=await subscriptionPool.query('SELECT id FROM public.atendimentos WHERE id=$1',[idMatch[1]]); if(!own.rowCount)return respondJson(response,404,{error:'Atendimento nao encontrado'});
+      return respondJson(response,200,{mensagens:await supportMessages(idMatch[1])});
+    }
+    if (idMatch && request.method === 'POST') {
+      const b=await readRequestJson(request); const conteudo=String(b.conteudo||'').trim().slice(0,10000); const anexo=String(b.anexo_url||'').slice(0,1000); if(!conteudo&&!anexo)return respondJson(response,400,{error:'Escreva uma mensagem ou anexe um arquivo'});
+      const r=await subscriptionPool.query('SELECT id FROM public.atendimentos WHERE id=$1',[idMatch[1]]); if(!r.rowCount)return respondJson(response,404,{error:'Atendimento nao encontrado'});
+      const m=await subscriptionPool.query(`INSERT INTO public.mensagens_atendimento(atendimento_id,remetente_id,remetente_tipo,conteudo,anexo_url,anexo_nome,anexo_tipo) VALUES($1,$2,'admin',$3,$4,$5,$6) RETURNING *`,[idMatch[1],user.id,conteudo,anexo||null,String(b.anexo_nome||'').slice(0,255)||null,String(b.anexo_tipo||'').slice(0,120)||null]);
+      await subscriptionPool.query(`UPDATE public.atendimentos SET status='aguardando_comerciante',updated_at=NOW() WHERE id=$1`,[idMatch[1]]);
+      return respondJson(response,201,{mensagem:m.rows[0]});
+    }
+  } else {
+    const merchant=await userMerchant(user.id); if(!merchant)return respondJson(response,403,{error:'Perfil de comerciante nao encontrado'});
+    if(pathname==='/api/support'&&request.method==='GET'){
+      const r=await subscriptionPool.query(`SELECT id,comerciante_id,loja_id,tipo,assunto,status,created_at,updated_at,(SELECT m.conteudo FROM public.mensagens_atendimento m WHERE m.atendimento_id=a.id ORDER BY m.created_at DESC LIMIT 1) AS ultima_mensagem FROM public.atendimentos a WHERE comerciante_id=$1 ORDER BY updated_at DESC`,[user.id]); return respondJson(response,200,{atendimentos:r.rows});
+    }
+    if(pathname==='/api/support'&&request.method==='POST'){
+      const b=await readRequestJson(request);const assunto=String(b.assunto||'').trim().slice(0,160);const conteudo=String(b.conteudo||'').trim().slice(0,10000);const tipo=['suporte','cobranca','geral'].includes(b.tipo)?b.tipo:'suporte';if(!assunto||!conteudo)return respondJson(response,400,{error:'Informe assunto e mensagem'});
+      const lr=await subscriptionPool.query('SELECT id FROM public.lojas WHERE merchant_id=$1 ORDER BY created_at LIMIT 1',[user.id]);const c=await subscriptionPool.query(`INSERT INTO public.atendimentos(comerciante_id,loja_id,tipo,assunto,status) VALUES($1,$2,$3,$4,'aguardando_admin') RETURNING *`,[user.id,lr.rows[0]?.id||null,tipo,assunto]);await subscriptionPool.query(`INSERT INTO public.mensagens_atendimento(atendimento_id,remetente_id,remetente_tipo,conteudo,anexo_url,anexo_nome,anexo_tipo) VALUES($1,$2,'comerciante',$3,$4,$5,$6)`,[c.rows[0].id,user.id,conteudo,String(b.anexo_url||'').slice(0,1000)||null,String(b.anexo_nome||'').slice(0,255)||null,String(b.anexo_tipo||'').slice(0,120)||null]);return respondJson(response,201,{atendimento:c.rows[0]});
+    }
+    if(idMatch){const check=await subscriptionPool.query('SELECT id FROM public.atendimentos WHERE id=$1 AND comerciante_id=$2',[idMatch[1],user.id]);if(!check.rowCount)return respondJson(response,404,{error:'Atendimento nao encontrado'});
+      if(request.method==='GET')return respondJson(response,200,{mensagens:await supportMessages(idMatch[1])});
+      if(request.method==='POST'){const b=await readRequestJson(request);const conteudo=String(b.conteudo||'').trim().slice(0,10000);const anexo=String(b.anexo_url||'').slice(0,1000);if(!conteudo&&!anexo)return respondJson(response,400,{error:'Escreva uma mensagem ou anexe um arquivo'});const m=await subscriptionPool.query(`INSERT INTO public.mensagens_atendimento(atendimento_id,remetente_id,remetente_tipo,conteudo,anexo_url,anexo_nome,anexo_tipo) VALUES($1,$2,'comerciante',$3,$4,$5,$6) RETURNING *`,[idMatch[1],user.id,conteudo,anexo||null,String(b.anexo_nome||'').slice(0,255)||null,String(b.anexo_tipo||'').slice(0,120)||null]);await subscriptionPool.query(`UPDATE public.atendimentos SET status='aguardando_admin',updated_at=NOW() WHERE id=$1`,[idMatch[1]]);return respondJson(response,201,{mensagem:m.rows[0]});}
+    }
+  }
+  response.setHeader('Allow','GET, POST');return respondJson(response,405,{error:'Metodo nao permitido'});
+}
+
 http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const pathname = url.pathname;
 
+  if (pathname === "/api/admin/support" || /^\/api\/admin\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname) || pathname === "/api/support" || /^\/api\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname)) {
+    routeSupport(request,response,pathname).catch(error=>{console.error("Falha no atendimento:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel concluir o atendimento"});}); return;
+  }
   if (pathname === "/api/health") {
     response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     response.end(JSON.stringify({ ok: true, service: "pedeia" }));

@@ -62,6 +62,12 @@ const initialLocalState = state;
 let authenticatedUser = null;
 let isAdmin = false;
 let adminMerchants = [];
+let adminTickets = [];
+let merchantTickets = [];
+let supportThread = null;
+let supportMessagesList = [];
+let lastAdminSupportPoll = 0;
+let lastAdminSupportStamp = null;
 let verifiedSubscription = null;
 let subscriptionCheckLoading = new URLSearchParams(location.search).has('loja');
 let subscriptionCheckError = false;
@@ -435,7 +441,7 @@ function render() {
 
   if (!merchantLogged()) return authView();
   if (isAdmin) return adminPanel();
-  if (state.merchant && shopSubscriptionBlocked()) return subscriptionPendingView();
+  if (state.merchant && shopSubscriptionBlocked() && state.view !== 'support') return subscriptionPendingView();
   if (!state.merchant || !state.shop || state.merchant.authUserId !== authenticatedUser.id) return shopSetupView();
   merchantPanel();
 }
@@ -458,13 +464,40 @@ async function checkAdmin() {
 async function loadAdminMerchants() {
   const result = await adminRequest('/api/admin/merchants');
   adminMerchants = result.merchants || [];
+  try { await loadAdminTickets(); } catch (e) { console.warn('Atendimento indisponível:',e.message); }
 }
 
+async function supportRequest(path, method='GET', body) {
+  const {data,error}=await window.pedeiaSupabase.auth.getSession(); const token=data?.session?.access_token;
+  if(error||!token) throw new Error('Sua sessão expirou. Entre novamente.');
+  const response=await fetch(path,{method,headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+  const result=await response.json(); if(!response.ok)throw new Error(result.error||'Falha no atendimento.'); return result;
+}
+async function supportUpload(file, ownerId) {
+  if(!file)return null;
+  if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type))throw new Error('Envie uma imagem JPG, PNG, WEBP ou PDF.');
+  if(file.size>15*1024*1024)throw new Error('O anexo deve ter no máximo 15 MB.');
+  const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'_'); const path=`${ownerId}/${crypto.randomUUID()}-${safe}`;
+  const {data,error}=await window.pedeiaSupabase.storage.from('atendimento-arquivos').upload(path,file,{contentType:file.type,upsert:false});
+  if(error)throw error; return {path:data.path,name:file.name,type:file.type};
+}
+async function signedSupportUrl(path){if(!path)return '';const {data,error}=await window.pedeiaSupabase.storage.from('atendimento-arquivos').createSignedUrl(path,3600);return error?'':data?.signedUrl||'';}
+async function loadAdminTickets(){const r=await supportRequest('/api/admin/support');adminTickets=r.atendimentos||[];}
+async function loadMerchantTickets(){const r=await supportRequest('/api/support');merchantTickets=r.atendimentos||[];}
+async function openSupportThread(id,admin){const r=await supportRequest(`${admin?'/api/admin/support':'/api/support'}/${encodeURIComponent(id)}/messages`);supportThread=id;supportMessagesList=await Promise.all((r.mensagens||[]).map(async m=>({...m,signedUrl:await signedSupportUrl(m.anexo_url)})));if(admin){await loadAdminTickets();adminPanel();}else{await loadMerchantTickets();state.view='support';renderSaved();}}
+function supportMessagesHtml(){return supportMessagesList.map(m=>`<article class="support-message ${m.remetente_tipo==='admin'?'support-mine':''}"><small>${m.remetente_tipo==='admin'?'Administrador':'Comerciante'} · ${new Date(m.created_at).toLocaleString('pt-BR')}</small>${m.conteudo?`<p>${esc(m.conteudo)}</p>`:''}${m.signedUrl?`<a href="${esc(m.signedUrl)}" target="_blank" rel="noopener">📎 ${esc(m.anexo_nome||'Abrir anexo')}</a>`:''}</article>`).join('')||'<p class="admin-empty">Nenhuma mensagem ainda.</p>';}
+async function sendSupportMessage(admin){const form=document.querySelector('#support-reply-form');if(!form||!supportThread)return;const fd=new FormData(form);const conteudo=String(fd.get('conteudo')||'').trim();const file=form.querySelector('input[type=file]')?.files?.[0];try{let attachment=null;if(file){const owner=admin?adminTickets.find(t=>t.id===supportThread)?.comerciante_id:authenticatedUser.id;attachment=await supportUpload(file,owner);}await supportRequest(`${admin?'/api/admin/support':'/api/support'}/${encodeURIComponent(supportThread)}/messages`,'POST',{conteudo,anexo_url:attachment?.path,anexo_nome:attachment?.name,anexo_tipo:attachment?.type});await openSupportThread(supportThread,admin);notify('Mensagem enviada.');}catch(e){notify(e.message||'Não foi possível enviar.');}}
+function merchantSupportView(){const current=merchantTickets.find(t=>t.id===supportThread);return `<section class="page-intro"><div><p class="eyebrow">ATENDIMENTO PEDEIA</p><h1>Falar com o administrador</h1><p class="intro-copy">Tire dúvidas, informe problemas ou envie comprovantes de pagamento.</p></div></section><section class="panel support-layout"><div class="support-list"><form id="support-new-form" class="support-new"><h3>Abrir chamado</h3><label>Tipo<select name="tipo"><option value="suporte">Suporte técnico</option><option value="cobranca">Mensalidade / cobrança</option><option value="geral">Outro assunto</option></select></label><label>Assunto<input name="assunto" required maxlength="160" placeholder="Ex.: Problema nos pedidos"></label><label>Mensagem<textarea name="conteudo" required maxlength="10000" placeholder="Descreva como podemos ajudar"></textarea></label><label class="support-file">Anexar imagem ou PDF (opcional)<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar chamado</button></form><h3>Minhas conversas</h3>${merchantTickets.map(t=>`<button class="support-ticket ${supportThread===t.id?'selected':''}" data-support-open="${t.id}"><strong>${esc(t.assunto)}</strong><small>${esc(t.tipo)} · ${esc(t.status)} · ${new Date(t.updated_at).toLocaleDateString('pt-BR')}</small><span>${esc(t.ultima_mensagem||'')}</span></button>`).join('')||'<p class="admin-empty">Você ainda não tem chamados.</p>'}</div><div class="support-conversation"><h3>${current?esc(current.assunto):'Selecione uma conversa'}</h3><div class="support-messages">${current?supportMessagesHtml():'<p class="admin-empty">Abra um chamado ou selecione uma conversa para ver as mensagens.</p>'}</div>${current?`<form id="support-reply-form" class="support-compose"><textarea name="conteudo" placeholder="Escreva sua resposta"></textarea><label class="support-file">Anexar imagem ou PDF<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar resposta</button></form>`:''}</div></section>`;}
+function bindSupportMerchant(){document.querySelector('#support-new-form')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const file=e.currentTarget.querySelector('input[type=file]')?.files?.[0];let attachment=null;if(file)attachment=await supportUpload(file,authenticatedUser.id);const result=await supportRequest('/api/support','POST',{tipo:f.get('tipo'),assunto:f.get('assunto'),conteudo:f.get('conteudo'),anexo_url:attachment?.path,anexo_nome:attachment?.name,anexo_tipo:attachment?.type});await loadMerchantTickets();await openSupportThread(result.atendimento.id,false);notify('Chamado enviado.');}catch(err){notify(err.message);}});document.querySelectorAll('[data-support-open]').forEach(b=>b.onclick=()=>openSupportThread(b.dataset.supportOpen,false));document.querySelector('#support-reply-form')?.addEventListener('submit',e=>{e.preventDefault();sendSupportMessage(false);});}
 function adminPanel() {
   const active = adminMerchants.filter(m => m.status_assinatura === 'ativa' && (!m.fim_assinatura || Date.parse(m.fim_assinatura) >= Date.now())).length;
   const pending = adminMerchants.filter(m => m.status_assinatura === 'pendente').length;
   const expired = adminMerchants.filter(m => m.status_assinatura !== 'ativa' || (m.fim_assinatura && Date.parse(m.fim_assinatura) < Date.now())).length;
-  app.innerHTML = `<main class="admin-shell"><header class="admin-header"><div>${brand()}<p class="eyebrow">CENTRAL DE CONTROLE</p><h1>Painel administrativo</h1><p>Gerencie comerciantes e assinaturas do PedeIA.</p></div><div class="admin-user"><span>${esc(authenticatedUser?.email || '')}</span><button class="secondary-button" data-action="logout">Sair</button></div></header><section class="admin-stats"><article><span>Comerciantes</span><strong>${adminMerchants.length}</strong></article><article><span>Assinaturas ativas</span><strong>${active}</strong></article><article><span>Pendentes</span><strong>${pending}</strong></article><article><span>Expiradas / suspensas</span><strong>${expired}</strong></article></section><section class="admin-list"><div class="admin-list-heading"><div><h2>Comerciantes</h2><p>Ative, renove ou suspenda o acesso.</p></div><button class="secondary-button" data-admin-refresh>Atualizar</button></div>${adminMerchants.length ? adminMerchants.map(m => { const exp = m.fim_assinatura ? new Date(m.fim_assinatura).toLocaleDateString('pt-BR') : 'Sem prazo'; const live = m.status_assinatura === 'ativa' && (!m.fim_assinatura || Date.parse(m.fim_assinatura) >= Date.now()); return `<article class="admin-merchant"><div class="admin-merchant-info"><strong>${esc(m.nome || 'Comerciante')}</strong><span>${esc(m.email || '')}</span><small>${esc(m.loja_nome || 'Loja ainda não cadastrada')} · ${Number(m.total_pedidos || 0)} pedidos</small></div><div class="admin-merchant-status"><b class="admin-status ${live ? 'active' : m.status_assinatura === 'pendente' ? 'pending' : 'blocked'}">${live ? 'Ativa' : esc(m.status_assinatura || 'pendente')}</b><small>Vencimento: ${exp}</small></div><div class="admin-actions"><button class="primary-button" data-admin-status="ativa" data-admin-id="${m.id}">Ativar 30 dias</button><button class="secondary-button" data-admin-status="suspensa" data-admin-id="${m.id}">Suspender</button><button class="secondary-button" data-admin-status="pendente" data-admin-id="${m.id}">Pendente</button></div></article>`; }).join('') : '<p class="admin-empty">Nenhum comerciante cadastrado ainda.</p>'}</section></main>`;
+  app.innerHTML = `<main class="admin-shell"><header class="admin-header"><div>${brand()}<p class="eyebrow">CENTRAL DE CONTROLE</p><h1>Painel administrativo</h1><p>Gerencie comerciantes e assinaturas do PedeIA.</p></div><div class="admin-user"><span>${esc(authenticatedUser?.email || '')}</span><button class="secondary-button" data-action="logout">Sair</button></div></header><section class="admin-stats"><article><span>Comerciantes</span><strong>${adminMerchants.length}</strong></article><article><span>Assinaturas ativas</span><strong>${active}</strong></article><article><span>Pendentes</span><strong>${pending}</strong></article><article><span>Expiradas / suspensas</span><strong>${expired}</strong></article></section><section class="admin-list"><div class="admin-list-heading"><div><h2>Comerciantes</h2><p>Ative, renove ou suspenda o acesso.</p></div><button class="secondary-button" data-admin-refresh>Atualizar</button></div>${adminMerchants.length ? adminMerchants.map(m => { const exp = m.fim_assinatura ? new Date(m.fim_assinatura).toLocaleDateString('pt-BR') : 'Sem prazo'; const live = m.status_assinatura === 'ativa' && (!m.fim_assinatura || Date.parse(m.fim_assinatura) >= Date.now()); return `<article class="admin-merchant"><div class="admin-merchant-info"><strong>${esc(m.nome || 'Comerciante')}</strong><span>${esc(m.email || '')}</span><small>${esc(m.loja_nome || 'Loja ainda não cadastrada')} · ${Number(m.total_pedidos || 0)} pedidos</small></div><div class="admin-merchant-status"><b class="admin-status ${live ? 'active' : m.status_assinatura === 'pendente' ? 'pending' : 'blocked'}">${live ? 'Ativa' : esc(m.status_assinatura || 'pendente')}</b><small>Vencimento: ${exp}</small></div><div class="admin-actions"><button class="primary-button" data-admin-status="ativa" data-admin-id="${m.id}">Ativar 30 dias</button><button class="secondary-button" data-admin-message="${m.id}">Enviar mensagem</button><button class="secondary-button" data-admin-status="suspensa" data-admin-id="${m.id}">Suspender</button><button class="secondary-button" data-admin-status="pendente" data-admin-id="${m.id}">Pendente</button></div></article>`; }).join('') : '<p class="admin-empty">Nenhum comerciante cadastrado ainda.</p>'}</section><section class="admin-list support-admin"><div class="admin-list-heading"><div><h2>Central de atendimento</h2><p>Mensagens, cobranças e chamados dos comerciantes.</p></div><button class="secondary-button" data-support-refresh>Atualizar</button></div><div class="support-layout"><div class="support-list">${adminTickets.map(t=>`<button class="support-ticket ${supportThread===t.id?'selected':''}" data-admin-thread="${t.id}"><strong>${esc(t.loja_nome||t.comerciante_nome||'Comerciante')}</strong><small>${esc(t.tipo)} · ${esc(t.status)}</small><span>${esc(t.assunto)} — ${esc(t.ultima_mensagem||'')}</span></button>`).join('')||'<p class="admin-empty">Nenhum atendimento recebido.</p>'}</div><div class="support-conversation"><h3>${supportThread?(adminTickets.find(t=>t.id===supportThread)?.assunto||'Conversa'): 'Selecione um atendimento'}</h3><div class="support-messages">${supportThread?supportMessagesHtml():'<p class="admin-empty">Selecione uma conversa para responder.</p>'}</div>${supportThread?`<form id="support-reply-form" class="support-compose"><textarea name="conteudo" placeholder="Digite sua resposta"></textarea><label class="support-file">Anexar QR Code, imagem ou PDF<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar resposta</button></form>`:''}</div></div></section></main>`;
+  document.querySelector('[data-support-refresh]')?.addEventListener('click',async()=>{try{await loadAdminTickets();adminPanel();}catch(e){notify(e.message);}});
+  document.querySelectorAll('[data-admin-thread]').forEach(b=>b.onclick=()=>openSupportThread(b.dataset.adminThread,true));
+  document.querySelectorAll('[data-admin-message]').forEach(b=>b.onclick=async()=>{const m=adminMerchants.find(x=>x.id===b.dataset.adminMessage);if(!m)return;const assunto=prompt('Assunto da mensagem/cobrança:','Mensalidade PedeIA');if(!assunto)return;const conteudo=prompt('Mensagem para '+(m.nome||m.email)+':','Olá! Seguem as informações para regularizar sua mensalidade.');if(!conteudo)return;try{const r=await supportRequest('/api/admin/support','POST',{comerciante_id:m.id,tipo:'cobranca',assunto,conteudo});await loadAdminTickets();await openSupportThread(r.atendimento.id,true);notify('Mensagem enviada ao comerciante.');}catch(e){notify(e.message);}});
+  document.querySelector('#support-reply-form')?.addEventListener('submit',e=>{e.preventDefault();sendSupportMessage(true);});
   document.querySelector('[data-admin-refresh]')?.addEventListener('click', async () => { try { await loadAdminMerchants(); adminPanel(); } catch (e) { notify(e.message); } });
   document.querySelectorAll('[data-admin-status]').forEach(button => button.addEventListener('click', async () => {
     const id = button.dataset.adminId, status = button.dataset.adminStatus;
@@ -534,6 +567,10 @@ function startLiveRefresh() {
     await syncServerState();
     if (authenticatedUser) {
       await refreshShopSubscription();
+      if (isAdmin && Date.now() - lastAdminSupportPoll > 15000 && !document.activeElement?.matches('input, textarea, select')) {
+        lastAdminSupportPoll = Date.now();
+        try { await loadAdminTickets(); const stamp = adminTickets.map(t => `${t.id}:${t.updated_at}`).join('|'); if (lastAdminSupportStamp !== null && stamp !== lastAdminSupportStamp) { notify('Há uma nova mensagem ou atualização na central de atendimento.'); if (document.querySelector('.admin-shell')) adminPanel(); } lastAdminSupportStamp = stamp; } catch (e) { console.warn('Atualização do atendimento falhou:', e.message); }
+      }
     }
   }, 1500);
 }
@@ -820,6 +857,7 @@ function merchantPanel() {
           ${nav('menu', 'menu', 'Cardapio')}
           ${nav('categories', 'categories', 'Categorias')}
           ${nav('chat', 'chat', 'Conversas', unreadMessagesCount('merchant'))}
+          ${nav('support', 'help', 'Suporte')}
           ${nav('printers', 'settings', 'Impressoras')}
           ${nav('settings', 'settings', 'Minha loja')}
         </nav>
@@ -843,13 +881,14 @@ function merchantPanel() {
           <button class="outline-button" data-action="open-shop">Ver minha loja</button>
         </header>
 
-        ${page === 'orders' ? orderBoard() : page === 'dashboard' ? overview(revenue) : page === 'menu' ? menuView() : page === 'categories' ? categoryView() : page === 'chat' ? chatView() : page === 'printers' ? printersView() : settingsView()}
+        ${page === 'support' ? merchantSupportView() : page === 'orders' ? orderBoard() : page === 'dashboard' ? overview(revenue) : page === 'menu' ? menuView() : page === 'categories' ? categoryView() : page === 'chat' ? chatView() : page === 'printers' ? printersView() : settingsView()}
       </main>
       <button class="quick-chat-fab" data-action="quick-chat" aria-label="Abrir conversas">💬</button>
     </div>
   `;
 
   bindMerchant();
+  if(page==='support') bindSupportMerchant();
   document.querySelectorAll('.settings-disclosure').forEach((item) => {
     item.open = openDisclosures.has(item.dataset.disclosure);
   });
@@ -1523,7 +1562,7 @@ function subscriptionPendingView() {
         <p class="eyebrow">${merchantLogged() ? 'ACESSO AO SISTEMA BLOQUEADO' : 'LOJA TEMPORARIAMENTE INDISPONÍVEL'}</p>
         <h1>${expired ? 'Assinatura expirada' : 'Assinatura pendente'}</h1>
         <p>${merchantLogged() ? (expired ? 'O período da sua assinatura expirou.' : 'Sua assinatura ainda está pendente.') + ' O acesso ao PedeIA está suspenso até a regularização da mensalidade. Entre em contato com o administrador para renovar o acesso.' : (expired ? 'O período da assinatura de' : 'A assinatura de') + ' <strong>' + esc(state.shop?.name || 'esta loja') + '</strong> ' + (expired ? 'expirou' : 'está pendente') + '. Para voltar a fazer pedidos, o responsável pela loja precisa renovar a assinatura.'}</p>
-        <a class="primary-button" href="/">${merchantLogged() ? 'Voltar ao início' : 'Entendi'}</a>
+        ${merchantLogged() ? '<button class="primary-button" data-action="open-support">Falar com o administrador</button><button class="secondary-button" data-action="logout">Sair</button>' : '<a class="primary-button" href="/">Entendi</a>'}
       </section>
     </main>
   `;
@@ -1555,6 +1594,8 @@ function subscriptionUnavailableView() {
     </main>
   `;
   document.querySelector('[data-action="retry-subscription"]')?.addEventListener('click', refreshShopSubscription);
+  document.querySelector('[data-action="open-support"]')?.addEventListener('click',async()=>{state.view='support';try{await loadMerchantTickets();supportThread=merchantTickets[0]?.id||null;if(supportThread){const r=await supportRequest(`/api/support/${supportThread}/messages`);supportMessagesList=await Promise.all((r.mensagens||[]).map(async m=>({...m,signedUrl:await signedSupportUrl(m.anexo_url)})));}}catch(e){notify(e.message);}render();});
+  document.querySelector('[data-action="logout"]')?.addEventListener('click',()=>window.pedeiaSupabase.auth.signOut());
 }
 
 function bindMerchant() {
@@ -1568,8 +1609,9 @@ function bindMerchant() {
   });
 
   document.querySelectorAll('[data-view]').forEach((button) => {
-    button.onclick = () => {
+    button.onclick = async () => {
       state.view = button.dataset.view;
+      if(state.view==='support'){try{await loadMerchantTickets();supportThread=merchantTickets[0]?.id||null;if(supportThread){const r=await supportRequest(`/api/support/${supportThread}/messages`);supportMessagesList=await Promise.all((r.mensagens||[]).map(async m=>({...m,signedUrl:await signedSupportUrl(m.anexo_url)})));}}catch(e){notify(e.message);}}
       renderSaved();
     };
   });
