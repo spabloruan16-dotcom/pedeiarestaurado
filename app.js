@@ -309,13 +309,14 @@ function shopSubscriptionStatus() {
     state.subscription_status ??
     state.paymentStatus ??
     state.billing?.status ??
+    state.merchant?.status_assinatura ??
     state.merchant?.subscriptionStatus ??
     state.merchant?.subscription_status ??
     state.merchant?.status ??
     state.merchant?.paymentStatus ??
     state.merchant?.payment_status ??
     state.merchant?.assinatura?.status;
-  return String(status || 'active').trim().toLowerCase();
+  return String(status || (authenticatedUser ? 'pendente' : 'active')).trim().toLowerCase();
 }
 
 function shopSubscriptionBlocked() {
@@ -325,6 +326,8 @@ function shopSubscriptionBlocked() {
     state.shop?.subscription_expires_at ??
     state.shop?.expiresAt ??
     state.shop?.expires_at ??
+    state.merchant?.fim_assinatura ??
+    state.subscription?.fim_assinatura ??
     state.subscription?.expiresAt ??
     state.subscription?.expires_at;
   const isExpired = expiresAt && Number.isFinite(Date.parse(expiresAt)) && Date.parse(expiresAt) < Date.now();
@@ -432,6 +435,7 @@ function render() {
 
   if (!merchantLogged()) return authView();
   if (isAdmin) return adminPanel();
+  if (state.merchant && shopSubscriptionBlocked()) return subscriptionPendingView();
   if (!state.merchant || !state.shop || state.merchant.authUserId !== authenticatedUser.id) return shopSetupView();
   merchantPanel();
 }
@@ -1516,10 +1520,10 @@ function subscriptionPendingView() {
     <main class="subscription-pending">
       <section class="subscription-pending-panel" role="status" aria-live="polite">
         <span class="subscription-pending-icon" aria-hidden="true">!</span>
-        <p class="eyebrow">LOJA TEMPORARIAMENTE INDISPONÍVEL</p>
+        <p class="eyebrow">${merchantLogged() ? 'ACESSO AO SISTEMA BLOQUEADO' : 'LOJA TEMPORARIAMENTE INDISPONÍVEL'}</p>
         <h1>${expired ? 'Assinatura expirada' : 'Assinatura pendente'}</h1>
-        <p>${expired ? 'O período da assinatura de' : 'A assinatura de'} <strong>${esc(state.shop?.name || 'esta loja')}</strong> ${expired ? 'expirou' : 'está pendente'}. Para voltar a fazer pedidos, o responsável pela loja precisa renovar a assinatura.</p>
-        <a class="primary-button" href="/">Entendi</a>
+        <p>${merchantLogged() ? (expired ? 'O período da sua assinatura expirou.' : 'Sua assinatura ainda está pendente.') + ' O acesso ao PedeIA está suspenso até a regularização da mensalidade. Entre em contato com o administrador para renovar o acesso.' : (expired ? 'O período da assinatura de' : 'A assinatura de') + ' <strong>' + esc(state.shop?.name || 'esta loja') + '</strong> ' + (expired ? 'expirou' : 'está pendente') + '. Para voltar a fazer pedidos, o responsável pela loja precisa renovar a assinatura.'}</p>
+        <a class="primary-button" href="/">${merchantLogged() ? 'Voltar ao início' : 'Entendi'}</a>
       </section>
     </main>
   `;

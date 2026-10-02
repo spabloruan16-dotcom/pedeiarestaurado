@@ -168,7 +168,7 @@ async function loadShopState(shop, merchant, includePrivate) {
 
 async function loadMerchantState(user) {
   const merchantResult = await subscriptionPool.query(
-    "SELECT id, nome, email FROM public.comerciantes WHERE id = $1",
+    "SELECT id, nome, email, status_assinatura, inicio_assinatura, fim_assinatura FROM public.comerciantes WHERE id = $1",
     [user.id]
   );
   const merchant = merchantResult.rows[0];
@@ -179,8 +179,13 @@ async function loadMerchantState(user) {
     [user.id]
   );
   const shop = shopResult.rows[0];
-  if (!shop) return { merchant: { authUserId: merchant.id, name: merchant.nome, email: merchant.email }, shop: null, categories: [], products: [] };
-  return loadShopState(shop, merchant, true);
+  const subscription = { status_assinatura: merchant.status_assinatura || "pendente", inicio_assinatura: merchant.inicio_assinatura, fim_assinatura: merchant.fim_assinatura };
+  if (!shop) return { merchant: { authUserId: merchant.id, name: merchant.nome, email: merchant.email, status_assinatura: subscription.status_assinatura, fim_assinatura: subscription.fim_assinatura }, subscription, shop: null, categories: [], products: [] };
+  const loaded = await loadShopState(shop, merchant, true);
+  loaded.merchant.status_assinatura = subscription.status_assinatura;
+  loaded.merchant.fim_assinatura = subscription.fim_assinatura;
+  loaded.subscription = subscription;
+  return loaded;
 }
 
 async function loadPublicShop(publicId) {
@@ -199,6 +204,19 @@ async function saveMerchantState(user, data) {
     throw new Error("Perfil de loja invalido para esta conta");
   }
 
+  const current = await subscriptionPool.query(
+    "SELECT status_assinatura, fim_assinatura FROM public.comerciantes WHERE id = $1",
+    [user.id]
+  );
+  if (current.rowCount) {
+    const sub = current.rows[0];
+    const expires = sub.fim_assinatura ? new Date(sub.fim_assinatura).getTime() : null;
+    if (sub.status_assinatura !== "ativa" || (expires !== null && expires < Date.now())) {
+      const error = new Error("Acesso suspenso: sua assinatura está pendente ou expirada. Regularize a mensalidade para continuar.");
+      error.statusCode = 403;
+      throw error;
+    }
+  }
   const client = await subscriptionPool.connect();
   try {
     await client.query("BEGIN");
@@ -401,7 +419,7 @@ http.createServer((request, response) => {
       return respondJson(response, 405, { error: "Metodo nao permitido" });
     })().catch((error) => {
       console.error("Falha ao carregar/salvar perfil do comerciante:", error.message);
-      if (!response.headersSent) respondJson(response, 500, { error: "Nao foi possivel salvar os dados da loja" });
+      if (!response.headersSent) respondJson(response, error.statusCode || 500, { error: error.message || "Nao foi possivel salvar os dados da loja" });
     });
     return;
   }
