@@ -1,0 +1,209 @@
+
+/* =========================================================
+   03) Cardápio e vitrine do cliente
+   Estiliza os produtos exibidos para quem está comprando na loja.
+========================================================= */
+.customer-product{
+align-items:flex-start}
+.customer-product-info{
+padding-top:4px}
+.add-food{
+  white-space:nowrap;
+  padding:9px 11px!important;
+  width:auto!important;
+  height:auto!important;
+  border-radius:8px!important;
+  font-size:10px!important;
+font-weight:700}
+.food-placeholder{
+  display:block;
+  width:42px;
+  height:42px;
+  border-radius:12px;
+background:linear-gradient(135deg,#ffd39c 0 45%,#f4512c 46% 58%,#6aa56f 59%)}
+.manage-emoji{
+overflow:hidden}
+.manage-emoji .food-placeholder{
+  width:100%;
+  height:100%;
+border-radius:inherit}
+.customer-tracker,.tracking-main-card,.tracking-panel{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:22px;
+  padding:18px;
+box-shadow:0 18px 45px rgba(30,32,38,.04)}
+.customer-tracker h2{
+  margin:6px 0 8px;
+  font-size:24px;
+letter-spacing:-1px}
+.customer-tracker p{
+  margin:0;
+  color:#7f8188;
+font-size:12px}
+.tracker-steps{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+margin-top:16px}
+.tracker-steps span{
+  background:#f3f1ee;
+  border-radius:9px;
+  padding:10px 8px;
+  text-align:center;
+  font-size:10px;
+  font-weight:700;
+  color:#7d7d85;
+line-height:1.2}
+.tracker-steps span.done{
+  background:#ebf8ef;
+color:#2d8d62}
+.tracker-steps span.current{
+  background:#fff0ea;
+color:var(--coral)}
+.customer-tracking-page{
+  display:grid;
+gap:16px}
+.tracking-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+gap:12px}
+.tracking-header h2{
+  margin:6px 0 0;
+  font-size:28px;
+letter-spacing:-1px}
+.tracking-pill{
+  display:inline-flex;
+  align-items:center;
+  padding:7px 10px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:700;
+text-transform:uppercase}
+.tracking-pill.waiting{
+  background:#fff6ee;
+color:#e77a1a}
+.tracking-pill.preparing{
+  background:#eef6ff;
+color:#3d7abf}
+.tracking-pill.ready{
+  background:#ebf8ef;
+color:#2d8d62}
+.tracking-pill.done{
+  background:#f2f1f6;
+color:#4a4d5d}
+.tracking-meta{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+margin-top:18px}
+.tracking-meta div{
+  background:#f8f7f5;
+  border:1px solid var(--line);
+  border-radius:12px;
+padding:10px}
+.tracking-meta span{
+  display:block;
+  color:#7d7d85;
+  font-size:10px;
+margin-bottom:4px}
+.tracking-meta strong{
+font-size:12px}
+.tracking-grid{
+  display:grid;
+gap:16px}
+.tracking-panel{
+  display:grid;
+gap:12px}
+.tracking-address-block{
+  background:#fff8f4;
+  border:1px solid rgba(244,81,44,.12);
+  border-radius:14px;
+  padding:12px;
+  display:grid;
+gap:4px}
+.tracking-address-block strong{
+font-size:15px}
+.tracking-address-block small{
+  color:#70757d;
+font-size:11px}
+.tracking-items{
+  display:grid;
+gap:10px}
+.tracking-item{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+  padding:9px 0;
+border-bottom:1px solid var(--line)}
+.tracking-item:last-child{
+border-bottom:0}
+.tracking-item strong{
+  display:block;
+  font-size:12px;
+margin-bottom:3px}
+.tracking-item small{
+  color:#666b73;
+font-size:10px}
+.tracking-updates{
+  display:grid;
+gap:10px}
+.update-item{
+  padding:10px 12px;
+  border-radius:12px;
+  background:#f8f7f5;
+border:1px solid var(--line)}
+.update-item strong{
+  display:block;
+  font-size:12px;
+margin-bottom:3px}
+.update-item small{
+  color:#666b73;
+font-size:11px}
+.tracking-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+margin-top:6px}
+.tracking-actions .primary-button,.tracking-actions .secondary-button{
+  flex:1;
+min-width:150px}
+.schedule-settings h3{
+  margin:8px 0 14px;
+  font-size:16px;
+letter-spacing:-.4px}
+.schedule-list{
+  display:grid;
+gap:12px}
+.hours-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:12px;
+background:#f9f8f6}
+.hours-day{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  font-weight:700;
+color:#4f535d}
+.hours-day input{
+accent-color:var(--coral)}
+.hours-range{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-size:10px;
+color:#7a7d83}
+.hours-range input{
+  width:92px;
+  padding:7px 8px;
+  border:1px solid #e4e0dc;
+  border-radius:8px;
+background:#fff}

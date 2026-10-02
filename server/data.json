@@ -1,16 +1,16 @@
 {
-  "view": "orders",
-  "customerView": "menu",
+  "view": "printers",
+  "customerView": "tracking",
   "merchant": {
     "name": "João da Silva",
     "email": "joao@exemplo.com",
     "password": "123456"
   },
   "shop": {
-    "name": "Brasa & Massa",
-    "type": "Hamburgueria",
-    "publicId": "brasa-massa-demo",
-    "description": "Hamburgueres artesanais, porções e bebidas para quem curte sabor de verdade.",
+    "name": "mariano food",
+    "type": "Lanchonete",
+    "publicId": "mariano-food-iymjx",
+    "description": "mariano carequinha dos lanche",
     "photo": "",
     "isOpen": true,
     "schedule": {
@@ -49,42 +49,17 @@
         "open": "12:00",
         "close": "20:00"
       }
-    }
+    },
+    "id": "f1f84ee5-a5c4-4478-af1d-35d8be9f97b9",
+    "merchantId": "12990710-f415-48e6-b2d6-eb1a970bdbc3",
+    "cover": "",
+    "delivery": true,
+    "pickup": true,
+    "deliveryMinutes": 45,
+    "pickupMinutes": 20
   },
-  "categories": [
-    "Lanches",
-    "Porções",
-    "Bebidas"
-  ],
-  "products": [
-    {
-      "id": 1,
-      "name": "X-Bacon",
-      "category": "Lanches",
-      "description": "Pão, burger, bacon, queijo e molho da casa.",
-      "price": 32.9,
-      "available": true,
-      "photo": ""
-    },
-    {
-      "id": 2,
-      "name": "Batata Chedar",
-      "category": "Porções",
-      "description": "Porção crocante com cheddar e cebola.",
-      "price": 24.5,
-      "available": true,
-      "photo": ""
-    },
-    {
-      "id": 3,
-      "name": "Refrigerante 600ml",
-      "category": "Bebidas",
-      "description": "Escolha seu sabor favorito.",
-      "price": 8.5,
-      "available": true,
-      "photo": ""
-    }
-  ],
+  "categories": [],
+  "products": [],
   "orders": [],
   "ratings": [],
   "messages": [],

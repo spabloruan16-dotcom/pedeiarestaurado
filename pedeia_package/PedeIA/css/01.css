@@ -1,0 +1,77 @@
+
+/* =========================================================
+   01) Ícones e elementos decorativos da interface
+   Aqui ficam os pequenos ícones e formas visuais usados no menu,
+   indicadores, cartões e detalhes da tela.
+   Esses estilos criam o visual de destaque dos itens da navegação
+   e dos ícones de status sem mexer no conteúdo da página.
+========================================================= */
+
+/* .nav-icon
+   Define o contêiner do ícone da navegação.
+   Mexe no tamanho, no fundo, no arredondamento e na sombra interna.
+   Isso deixa o menu visualmente mais limpo e com destaque ao passar o mouse.
+*/
+.nav-icon{
+  display:grid;
+  width:22px;
+  height:22px;
+  place-items:center;
+  border-radius:10px;
+  background:rgba(255,255,255,.45);
+  color:#77808d;
+  position:relative;
+  transition:all .25s ease;
+  box-shadow:inset 0 0 0 1px rgba(34,42,53,.05), 0 8px 16px rgba(31,36,48,.05);
+  backdrop-filter:blur(8px);
+}
+.nav-icon svg{
+  width:15px;
+  height:15px;
+  stroke:currentColor;
+  fill:none;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  display:block;
+}
+.nav-icon.home svg{ width:16px; height:16px; }
+.side-nav button{
+  position:relative;
+  transition:all .25s ease;
+  transform:translateY(0);
+}
+.side-nav button:hover, .side-nav button:focus-visible {
+  transform:translateY(-1px);
+}
+.side-nav button:hover .nav-icon,
+.side-nav button.active .nav-icon{
+  background:linear-gradient(135deg,#ffb56f,#f4512c);
+  color:#fff;
+  box-shadow:0 12px 22px rgba(244,81,44,.18);
+}
+.side-nav button.active{
+  background:linear-gradient(135deg,#fff3ee,#fff);
+  color:var(--coral);
+  box-shadow:inset 0 0 0 1px rgba(244,81,44,.08), 0 10px 20px rgba(244,81,44,.05);
+}
+.side-nav button b{
+  margin-left:auto;
+  background:#f4512c;
+  color:#fff;
+  border-radius:20px;
+  font-size:10px;
+  padding:3px 7px;
+  min-width:18px;
+  text-align:center;
+}
+.art-tiles{
+  display:none;
+}
+.art-tile,
+.art-image,
+.burger-tile,
+.drink-tile,
+.chart-tile{
+  display:none;
+}
