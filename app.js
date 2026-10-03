@@ -461,8 +461,8 @@ async function adminRequest(path, method = 'GET', body) {
 }
 
 async function checkAdmin() {
-  try { await adminRequest('/api/admin/session'); isAdmin = true; return true; }
-  catch (error) { isAdmin = false; if (error.message.includes('Acesso restrito')) return false; return false; }
+  try { const result = await adminRequest('/api/admin/session'); isAdmin = result?.isAdmin === true; return isAdmin; }
+  catch (error) { isAdmin = false; return false; }
 }
 
 async function loadAdminMerchants() {

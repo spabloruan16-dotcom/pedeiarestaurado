@@ -443,13 +443,31 @@ http.createServer((request, response) => {
     return;
   }
 
-  if (pathname === "/api/admin/session" || pathname === "/api/admin/merchants" || /^\/api\/admin\/merchants\/[0-9a-f-]+\/subscription$/i.test(pathname)) {
+  // Endpoint de descoberta de perfil: usuario autenticado recebe isAdmin=false
+  // sem acesso a dados administrativos. As demais rotas continuam exigindo requireAdmin.
+  if (pathname === "/api/admin/session" && request.method === "GET") {
+    (async () => {
+      const user = await authenticatedUser(request);
+      if (!user) return respondJson(response, 401, { error: "Sessao invalida ou email nao confirmado" });
+      if (!subscriptionPool) return respondJson(response, 503, { error: "Banco de dados indisponivel" });
+      const result = await subscriptionPool.query(
+        "SELECT 1 FROM public.admin_roles WHERE user_id = $1 AND role = 'admin' LIMIT 1", [user.id]
+      );
+      return respondJson(response, 200, {
+        isAdmin: result.rowCount > 0,
+        user: { id: user.id, email: user.email }
+      });
+    })().catch((error) => {
+      console.error("Falha ao verificar perfil:", error.message);
+      if (!response.headersSent) respondJson(response, 500, { error: "Nao foi possivel verificar o perfil" });
+    });
+    return;
+  }
+
+  if (pathname === "/api/admin/merchants" || /^\/api\/admin\/merchants\/[0-9a-f-]+\/subscription$/i.test(pathname)) {
     (async () => {
       const auth = await requireAdmin(request);
       if (auth.error) return respondJson(response, auth.status, { error: auth.error });
-      if (pathname === "/api/admin/session" && request.method === "GET") {
-        return respondJson(response, 200, { isAdmin: true, user: { id: auth.user.id, email: auth.user.email } });
-      }
       if (pathname === "/api/admin/merchants" && request.method === "GET") {
         const result = await subscriptionPool.query(
           `SELECT c.id, c.nome, c.email, c.status_assinatura, c.inicio_assinatura, c.fim_assinatura,
