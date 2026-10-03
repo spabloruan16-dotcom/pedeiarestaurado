@@ -16,3 +16,10 @@ O arquivo `recursos-avancados.sql` é uma migração **incremental** para a estr
 
 ## Importante
 A migração prepara o modelo de dados; não habilita sozinha telas, automações, gateway de pagamento, envio de WhatsApp, baixa automática de ingredientes ou notificações. Esses fluxos exigem integração no frontend/backend, validação de autorização por loja, políticas RLS e credenciais de provedores. Não coloque `service_role` no navegador. O checkout existente também não deve ser anunciado como pagamento online integrado sem conectar e testar um gateway.
+
+## Personalização visual da vitrine (versão atualizada)
+- O painel Minha loja permite configurar imagem de capa, cor principal e um aviso de oferta com título, descrição e data final.
+- O cadastro/edição de produto permite marcar itens em destaque e definir uma etiqueta curta.
+- A vitrine pública exibe o banner, a cor, o aviso ativo e uma seção de produtos destacados.
+- Antes do deploy, execute `personalizacao-vitrine.sql` no Supabase. A migração só adiciona `lojas.personalizacao_vitrine` e não remove dados.
+- O aviso de oferta é promocional/informativo: ainda não aplica desconto no preço nem limita unidades no checkout. Não anunciar redução de preço até implementar validação do desconto no servidor.

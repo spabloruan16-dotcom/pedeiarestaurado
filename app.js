@@ -423,7 +423,8 @@ function ensureDemoData() {
     description: 'Hamburgueres artesanais, porções e bebidas para quem curte sabor de verdade.',
     photo: '',
     isOpen: true,
-    schedule: defaultShopSchedule()
+    schedule: defaultShopSchedule(),
+    themeColor: '#b9362b', cover: '', storefront: {}
   };
   state.categories = ['Lanches', 'Porções', 'Bebidas'];
   state.products = [
@@ -1332,6 +1333,20 @@ function settingsView() {
         </div>
       </details>
 
+      <details class="panel shop-editor settings-disclosure" data-disclosure="storefront-design">
+        <summary class="disclosure-summary"><span><small>APARÊNCIA</small><strong>Personalizar vitrine</strong><span>Banner, cores e ofertas em destaque</span></span><span class="disclosure-indicator" aria-hidden="true"></span></summary>
+        <div class="disclosure-body editor-body">
+          <label>Banner de capa<input type="file" accept="image/*" data-shop-cover></label>
+          ${state.shop.cover ? `<img class="storefront-cover-preview" src="${esc(state.shop.cover)}" alt="Prévia do banner">` : '<div class="storefront-cover-preview storefront-cover-empty">A prévia do banner aparecerá aqui</div>'}
+          <label>Cor principal <input type="color" data-store-theme value="${/^#[0-9a-f]{6}$/i.test(state.shop.themeColor || '') ? state.shop.themeColor : '#b9362b'}"></label>
+          <label>Título da oferta <input data-promo-field="title" maxlength="80" value="${esc(state.shop.storefront?.title || '')}" placeholder="Ex.: Oferta relâmpago"></label>
+          <label>Descrição da oferta <textarea data-promo-field="description" maxlength="220" placeholder="Descreva a promoção">${esc(state.shop.storefront?.description || '')}</textarea></label>
+          <label>Válida até <input type="datetime-local" data-promo-field="endsAt" value="${esc(state.shop.storefront?.endsAt || '')}"></label>
+          <button class="primary-button" data-action="save-storefront">Salvar personalização</button>
+          <small class="muted">Esta área divulga a oferta na vitrine. O desconto no preço e a validação no checkout ainda exigem integração específica.</small>
+        </div>
+      </details>
+
       <details class="panel operation-settings settings-disclosure" data-disclosure="shop-delivery">
         <summary class="disclosure-summary">
           <span><small>OPERAÇÃO</small><strong>Formas de recebimento</strong><span>Entrega, retirada e prazos</span></span>
@@ -1390,9 +1405,10 @@ function customerShop() {
         </div>
       </header>
 
-      <section class="store-hero">
-        ${state.shop.photo ? `<img class="store-photo" src="${state.shop.photo}" alt="">` : '<div class="store-avatar-big"></div>'}
-        <div>
+      <section class="store-hero" style="--store-accent:${/^#[0-9a-f]{6}$/i.test(state.shop.themeColor || '') ? state.shop.themeColor : '#b9362b'}">
+        ${state.shop.cover ? `<div class="store-cover" style="background-image:linear-gradient(90deg,rgba(15,20,17,.76),rgba(15,20,17,.12)),url('${esc(state.shop.cover)}')"></div>` : ''}
+        ${state.shop.photo ? `<img class="store-photo" src="${esc(state.shop.photo)}" alt="">` : '<div class="store-avatar-big"></div>'}
+        <div class="store-hero-copy">
           <span class="open-pill">${state.shop.isOpen ? 'Aberta agora' : 'Fechada'}</span>
           <h1>${esc(state.shop.name)}</h1>
           <p>${esc(state.shop.description)}</p>
@@ -1409,6 +1425,8 @@ function customerShop() {
 
       ${state.customerView === 'menu' ? `
         ${tracked ? customerTracker(tracked) : ''}
+        ${state.shop.storefront?.title && (!state.shop.storefront.endsAt || Date.parse(state.shop.storefront.endsAt) > Date.now()) ? `<section class="store-promo" style="--store-accent:${/^#[0-9a-f]{6}$/i.test(state.shop.themeColor || '') ? state.shop.themeColor : '#b9362b'}"><div><span>OFERTA EM DESTAQUE</span><h2>${esc(state.shop.storefront.title)}</h2><p>${esc(state.shop.storefront.description || '')}</p>${state.shop.storefront.endsAt ? `<small>Válida até ${new Date(state.shop.storefront.endsAt).toLocaleString('pt-BR')}</small>` : ''}</div><b>OFERTA</b></section>` : ''}
+        ${state.products.some(product => product.available && product.featured) ? `<section class="featured-products"><div class="category-heading"><h2>⭐ Em destaque</h2><span>Escolhas da loja</span></div><div class="customer-products">${state.products.filter(product => product.available && product.featured).map(customerProduct).join('')}</div></section>` : ''}
         <nav class="customer-categories">
           ${state.categories.map((category) => `<a href="#${encodeURIComponent(category)}">${esc(category)}</a>`).join('')}
         </nav>
@@ -1550,7 +1568,8 @@ function customerProduct(product) {
     <article class="customer-product">
       <div class="food-image">${product.photo ? `<img src="${product.photo}" alt="">` : '<span class="food-placeholder"></span>'}</div>
       <div class="customer-product-info">
-        <h3>${esc(product.name)}</h3>
+        <h3>${product.featured ? '⭐ ' : ''}${esc(product.name)}</h3>
+        ${product.label ? `<span class="product-label">${esc(product.label)}</span>` : ''}
         <p>${esc(product.description)}</p>
         <strong>${money(product.price)}</strong>
       </div>
@@ -1672,6 +1691,12 @@ function bindMerchant() {
     };
   });
 
+  document.querySelector('[data-shop-cover]')?.addEventListener('change', (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/') || file.size > 4 * 1024 * 1024) { notify('Escolha uma imagem de até 4 MB.'); return; }
+    readImage(file, image => { state.shop.cover = image; renderSaved(); document.querySelector('[data-disclosure="storefront-design"]')?.setAttribute('open',''); });
+  });
   document.querySelector('[data-shop-photo]')?.addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -1707,6 +1732,12 @@ function handleAction(event) {
     }
     state.shop.isOpen = nextOpen;
     return renderSaved();
+  }
+  if (action === 'save-storefront') {
+    state.shop.themeColor = document.querySelector('[data-store-theme]')?.value || '#b9362b';
+    state.shop.storefront = state.shop.storefront || {};
+    document.querySelectorAll('[data-promo-field]').forEach(input => { state.shop.storefront[input.dataset.promoField] = input.value.trim(); });
+    return Promise.resolve(save()).then(() => { render(); notify('Personalização da vitrine salva.'); });
   }
   if (action === 'save-shop') {
     document.querySelectorAll('[data-setting]').forEach((input) => {
@@ -2029,6 +2060,8 @@ function productDialog(id) {
       <label>Categoria<select name="category" required>${state.categories.map((category) => `<option ${product?.category === category ? 'selected' : ''}>${esc(category)}</option>`).join('')}</select></label>
       <label>Descrição<textarea name="description" required placeholder="Ingredientes, tamanho e diferenciais.">${esc(product?.description || '')}</textarea></label>
       <label>Preço base<input name="price" type="number" min="0.01" step="0.01" required value="${product?.price || ''}" placeholder="0,00"></label>
+      <label class="choice-row"><input name="featured" type="checkbox" ${product?.featured ? 'checked' : ''}><span><strong>Produto em destaque</strong><small>Mostrar também na seção de destaque da vitrine</small></span></label>
+      <label>Etiqueta opcional<input name="label" maxlength="32" value="${esc(product?.label || '')}" placeholder="Ex.: Mais vendido"></label>
       <div class="product-options-config"><h3>Personalização do pedido</h3><p>Opcional. Cadastre uma opção por linha. Use <code>Nome|Preço adicional</code>; deixe o preço de fora para opções sem custo.</p>
         <label>Máximo de sabores (pizza)<input name="flavorMax" type="number" min="1" max="6" value="${Number(groups.find(g=>g.key==='flavors')?.max || 1)}"></label>
         ${optionBlock('flavors','Sabores','Para pizza ou produtos que permitem escolher sabores.')}
@@ -2050,7 +2083,7 @@ function productDialog(id) {
     if(edges.length) options.push({key:'edges',title:'Escolha a borda',type:'single',min:0,max:1,choices:edges});
     if(extras.length) options.push({key:'extras',title:'Adicionais',type:'multi',min:0,max:extras.length,choices:extras});
     const finish = (photo) => {
-      const next={id:product?.id||Date.now(),name:String(data.get('name')||'').trim(),category:String(data.get('category')||state.categories[0]||'Geral'),description:String(data.get('description')||'').trim(),price:Number(data.get('price')||0),photo:photo||product?.photo||null,available:product?.available??true,options};
+      const next={id:product?.id||Date.now(),name:String(data.get('name')||'').trim(),category:String(data.get('category')||state.categories[0]||'Geral'),description:String(data.get('description')||'').trim(),price:Number(data.get('price')||0),photo:photo||product?.photo||null,available:product?.available??true,options,featured:data.get('featured')==='on',label:String(data.get('label')||'').trim()};
       if(product) Object.assign(product,next); else state.products.push(next);
       closeDialog(); renderSaved();
     };
