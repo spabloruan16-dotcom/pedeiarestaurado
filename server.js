@@ -135,7 +135,7 @@ async function loadShopState(shop, merchant, includePrivate) {
     [shop.id]
   );
   const productResult = await subscriptionPool.query(
-    `SELECT p.id, p.categoria_id, p.nome, p.descricao, p.foto_url, p.preco, p.disponivel, c.nome AS categoria
+    `SELECT p.id, p.categoria_id, p.nome, p.descricao, p.foto_url, p.preco, p.disponivel, p.opcoes, c.nome AS categoria
      FROM public.produtos p JOIN public.categorias c ON c.id = p.categoria_id
      WHERE p.loja_id = $1 ORDER BY c.ordem, p.created_at`,
     [shop.id]
@@ -150,7 +150,8 @@ async function loadShopState(shop, merchant, includePrivate) {
       description: row.descricao || "",
       photo: row.foto_url || "",
       price: Number(row.preco),
-      available: row.disponivel
+      available: row.disponivel,
+      options: row.opcoes || []
     })),
     delivery: {
       delivery: shop.aceita_entrega,
@@ -283,19 +284,19 @@ async function saveMerchantState(user, data) {
         ? oldById.get(product.id)
         : oldByName.get(`${categoryId}:${String(product.name || "").toLowerCase()}`);
       const values = [shopId, categoryId, String(product.name || "Produto").slice(0, 140), String(product.description || ""),
-        product.photo || null, Math.max(0, Number(product.price || 0)), product.available !== false];
+        product.photo || null, Math.max(0, Number(product.price || 0)), product.available !== false, JSON.stringify(Array.isArray(product.options) ? product.options : [])];
       let productId;
       if (existing) {
         const updated = await client.query(
-          `UPDATE public.produtos SET categoria_id=$2, nome=$3, descricao=$4, foto_url=$5, preco=$6, disponivel=$7, updated_at=NOW()
-           WHERE id=$8 AND loja_id=$1 RETURNING id`,
+          `UPDATE public.produtos SET categoria_id=$2, nome=$3, descricao=$4, foto_url=$5, preco=$6, disponivel=$7, opcoes=$8::jsonb, updated_at=NOW()
+           WHERE id=$9 AND loja_id=$1 RETURNING id`,
           [...values, existing.id]
         );
         productId = updated.rows[0].id;
       } else {
         const inserted = await client.query(
-          `INSERT INTO public.produtos (loja_id, categoria_id, nome, descricao, foto_url, preco, disponivel)
-           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+          `INSERT INTO public.produtos (loja_id, categoria_id, nome, descricao, foto_url, preco, disponivel, opcoes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING id`,
           values
         );
         productId = inserted.rows[0].id;

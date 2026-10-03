@@ -1075,3 +1075,44 @@ select:focus {
 .support-file input { display:block; margin-top:5px; max-width:100%; }
 @media(max-width:760px){.support-layout{grid-template-columns:1fr}.support-conversation{min-height:260px}.support-message{max-width:96%}}
 .support-ticket-wrap{border:1px solid var(--line,#dce5df);border-radius:12px;padding:8px;margin-bottom:9px;background:#fff}.support-ticket-wrap .support-ticket{width:100%;text-align:left;border:0;background:transparent}.support-ticket-controls{display:flex;align-items:end;justify-content:space-between;gap:8px;padding:4px 8px 2px}.support-ticket-controls label{display:flex;align-items:center;gap:8px;font-size:12px;color:#68756f}.support-ticket-controls select{max-width:160px;border:1px solid #dce5df;border-radius:8px;padding:7px;background:white;color:#202923}.support-ticket-controls .secondary-button{padding:7px 12px;font-size:12px}
+
+/* Anexos visuais na conversa de atendimento */
+.support-image-link { display:inline-flex; flex-direction:column; align-items:flex-start; gap:5px; max-width:min(300px,100%); padding:0; margin-top:7px; border:0; background:transparent; color:var(--brand,#b9362b); text-align:left; cursor:zoom-in; }
+.support-image-preview { display:block; width:auto; max-width:100%; max-height:230px; object-fit:contain; border:1px solid var(--line); border-radius:9px; background:#fff; }
+.support-image-link span { font-size:11px; }
+.support-pdf-link { display:flex; align-items:center; gap:10px; max-width:100%; padding:10px 12px; margin-top:7px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--ink); text-decoration:none; }
+.support-pdf-link > span:first-child { font-size:24px; }
+.support-pdf-link > span:nth-child(2) { display:grid; gap:3px; min-width:0; }
+.support-pdf-link strong { overflow-wrap:anywhere; font-size:12px; }
+.support-pdf-link small { color:var(--muted); font-size:11px; }
+.support-image-modal { display:flex; justify-content:center; align-items:center; width:min(85vw,1000px); max-width:85vw; max-height:78vh; }
+.support-image-modal img { display:block; max-width:100%; max-height:78vh; object-fit:contain; border-radius:8px; }
+
+/* Vitrine e configurador de produtos */
+.store-hero{position:relative;overflow:hidden;border-radius:0 0 24px 24px;background:linear-gradient(115deg,#fff 0%,#fff8f2 65%,#fce9df 100%);}
+.customer-categories{display:flex;gap:10px;overflow-x:auto;scrollbar-width:thin;z-index:5;}
+.customer-categories a{flex:0 0 auto;padding:9px 15px;border:1px solid var(--line);border-radius:999px;background:#fff;text-decoration:none;transition:background .18s,transform .18s;}
+.customer-categories a:hover,.customer-categories a:first-child{background:#fff0ed;border-color:#f1c5ba;color:var(--coral);transform:translateY(-1px);}
+.customer-products{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:16px;}
+.customer-product{grid-template-columns:104px minmax(0,1fr);grid-template-rows:auto auto;gap:8px 14px;padding:14px;border-radius:16px;transition:transform .18s,box-shadow .18s;}
+.customer-product:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(37,48,39,.09);}
+.food-image{width:104px;height:104px;grid-row:1 / span 2;border-radius:12px;overflow:hidden;}
+.food-image img{width:100%;height:100%;object-fit:cover;}
+.customer-product .add-food{grid-column:2;align-self:end;}
+.product-options-config{display:grid;gap:10px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8faf7;}
+.product-options-config h3{margin:0;font-size:16px;}
+.product-options-config p,.option-config-label small{margin:0;color:var(--muted);font-size:12px;line-height:1.5;}
+.option-config-label{display:grid;gap:6px;}
+.customer-option-group{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff;}
+.option-group-heading{display:grid;gap:3px;margin-bottom:3px;}
+.option-group-heading small{color:var(--muted);font-size:12px;}
+.customer-option-choice{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #e8ece7;border-radius:9px;cursor:pointer;}
+.customer-option-choice:has(input:checked){border-color:#6da786;background:#f0f8f1;}
+.customer-option-choice input{width:18px;height:18px;accent-color:#28734f;}
+.customer-option-choice span{flex:1;}
+.customer-option-choice b{font-size:12px;color:var(--muted);}
+.option-base-price,.option-total{display:flex;justify-content:space-between;align-items:center;padding:10px 0;}
+.option-total{border-top:1px solid var(--line);font-size:16px;}
+.option-total strong{color:var(--coral);font-size:20px;}
+.cart-customizations{display:block;margin-top:4px;color:var(--muted);line-height:1.5;}
+@media(max-width:600px){.customer-product{grid-template-columns:84px minmax(0,1fr);padding:11px;gap:7px 11px}.food-image{width:84px;height:84px}.customer-menu section{padding-left:16px;padding-right:16px}.customer-categories{padding-left:14px;padding-right:14px}}

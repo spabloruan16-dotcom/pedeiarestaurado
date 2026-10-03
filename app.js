@@ -485,15 +485,17 @@ async function signedSupportUrl(path){if(!path)return '';const {data,error}=awai
 async function loadAdminTickets(){const r=await supportRequest('/api/admin/support');adminTickets=r.atendimentos||[];}
 async function loadMerchantTickets(){const r=await supportRequest('/api/support');merchantTickets=r.atendimentos||[];}
 async function openSupportThread(id,admin){const r=await supportRequest(`${admin?'/api/admin/support':'/api/support'}/${encodeURIComponent(id)}/messages`);supportThread=id;supportMessagesList=await Promise.all((r.mensagens||[]).map(async m=>({...m,signedUrl:await signedSupportUrl(m.anexo_url)})));if(admin){await loadAdminTickets();adminPanel();}else{await loadMerchantTickets();state.view='support';renderSaved();}}
-function supportMessagesHtml(){return supportMessagesList.map(m=>`<article class="support-message ${m.remetente_tipo==='admin'?'support-mine':''}"><small>${m.remetente_tipo==='admin'?'Administrador':'Comerciante'} · ${new Date(m.created_at).toLocaleString('pt-BR')}</small>${m.conteudo?`<p>${esc(m.conteudo)}</p>`:''}${m.signedUrl?`<a href="${esc(m.signedUrl)}" target="_blank" rel="noopener">📎 ${esc(m.anexo_nome||'Abrir anexo')}</a>`:''}</article>`).join('')||'<p class="admin-empty">Nenhuma mensagem ainda.</p>';}
+function bindSupportPreviews(){document.querySelectorAll('[data-support-preview]').forEach(button=>button.addEventListener('click',()=>{const url=button.dataset.supportPreview;const alt=button.dataset.supportAlt||'Imagem anexada';showDialog(`<div class="support-image-modal"><img src="${esc(url)}" alt="${esc(alt)}"></div>`);}));}
+function supportMessagesHtml(){return supportMessagesList.map(m=>{const url=m.signedUrl||'';const mime=String(m.anexo_tipo||'').toLowerCase();const filename=String(m.anexo_nome||'Anexo');const image=mime.startsWith('image/')||/\.(jpe?g|png|webp|gif|avif)$/i.test(filename);const pdf=mime==='application/pdf'||/\.pdf$/i.test(filename);const attachment=url?(image?`<button type="button" class="support-image-link" data-support-preview="${esc(url)}" data-support-alt="${esc(filename)}" aria-label="Ampliar imagem: ${esc(filename)}"><img class="support-image-preview" src="${esc(url)}" alt="${esc(filename)}" loading="lazy"><span>Ampliar imagem</span></button>`:pdf?`<a class="support-pdf-link" href="${esc(url)}" target="_blank" rel="noopener"><span aria-hidden="true">📄</span><span><strong>${esc(filename)}</strong><small>Abrir PDF em nova aba</small></span><span aria-hidden="true">↗</span></a>`:`<a href="${esc(url)}" target="_blank" rel="noopener">📎 ${esc(filename)}</a>`):'';return `<article class="support-message ${m.remetente_tipo==='admin'?'support-mine':''}"><small>${m.remetente_tipo==='admin'?'Administrador':'Comerciante'} · ${new Date(m.created_at).toLocaleString('pt-BR')}</small>${m.conteudo?`<p>${esc(m.conteudo)}</p>`:''}${attachment}</article>`;}).join('')||'<p class="admin-empty">Nenhuma mensagem ainda.</p>'; }
 async function sendSupportMessage(admin){const form=document.querySelector('#support-reply-form');if(!form||!supportThread)return;const fd=new FormData(form);const conteudo=String(fd.get('conteudo')||'').trim();const file=form.querySelector('input[type=file]')?.files?.[0];try{let attachment=null;if(file){const owner=admin?adminTickets.find(t=>t.id===supportThread)?.comerciante_id:authenticatedUser.id;attachment=await supportUpload(file,owner);}await supportRequest(`${admin?'/api/admin/support':'/api/support'}/${encodeURIComponent(supportThread)}/messages`,'POST',{conteudo,anexo_url:attachment?.path,anexo_nome:attachment?.name,anexo_tipo:attachment?.type});await openSupportThread(supportThread,admin);notify('Mensagem enviada.');}catch(e){notify(e.message||'Não foi possível enviar.');}}
 function merchantSupportView(){const current=merchantTickets.find(t=>t.id===supportThread);return `<section class="page-intro"><div><p class="eyebrow">ATENDIMENTO PEDEIA</p><h1>Falar com o administrador</h1><p class="intro-copy">Tire dúvidas, informe problemas ou envie comprovantes de pagamento.</p></div></section><section class="panel support-layout"><div class="support-list"><form id="support-new-form" class="support-new"><h3>Abrir chamado</h3><label>Tipo<select name="tipo"><option value="suporte">Suporte técnico</option><option value="cobranca">Mensalidade / cobrança</option><option value="geral">Outro assunto</option></select></label><label>Assunto<input name="assunto" required maxlength="160" placeholder="Ex.: Problema nos pedidos"></label><label>Mensagem<textarea name="conteudo" required maxlength="10000" placeholder="Descreva como podemos ajudar"></textarea></label><label class="support-file">Anexar imagem ou PDF (opcional)<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar chamado</button></form><h3>Minhas conversas</h3>${merchantTickets.map(t=>`<button class="support-ticket ${supportThread===t.id?'selected':''}" data-support-open="${t.id}"><strong>${esc(t.assunto)}</strong><small>${esc(t.tipo)} · ${esc(t.status)} · ${new Date(t.updated_at).toLocaleDateString('pt-BR')}</small><span>${esc(t.ultima_mensagem||'')}</span></button>`).join('')||'<p class="admin-empty">Você ainda não tem chamados.</p>'}</div><div class="support-conversation"><h3>${current?esc(current.assunto):'Selecione uma conversa'}</h3><div class="support-messages">${current?supportMessagesHtml():'<p class="admin-empty">Abra um chamado ou selecione uma conversa para ver as mensagens.</p>'}</div>${current?`<form id="support-reply-form" class="support-compose"><textarea name="conteudo" placeholder="Escreva sua resposta"></textarea><label class="support-file">Anexar imagem ou PDF<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar resposta</button></form>`:''}</div></section>`;}
-function bindSupportMerchant(){document.querySelector('#support-new-form')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const file=e.currentTarget.querySelector('input[type=file]')?.files?.[0];let attachment=null;if(file)attachment=await supportUpload(file,authenticatedUser.id);const result=await supportRequest('/api/support','POST',{tipo:f.get('tipo'),assunto:f.get('assunto'),conteudo:f.get('conteudo'),anexo_url:attachment?.path,anexo_nome:attachment?.name,anexo_tipo:attachment?.type});await loadMerchantTickets();await openSupportThread(result.atendimento.id,false);notify('Chamado enviado.');}catch(err){notify(err.message);}});document.querySelectorAll('[data-support-open]').forEach(b=>b.onclick=()=>openSupportThread(b.dataset.supportOpen,false));document.querySelector('#support-reply-form')?.addEventListener('submit',e=>{e.preventDefault();sendSupportMessage(false);});}
+function bindSupportMerchant(){document.querySelector('#support-new-form')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const file=e.currentTarget.querySelector('input[type=file]')?.files?.[0];let attachment=null;if(file)attachment=await supportUpload(file,authenticatedUser.id);const result=await supportRequest('/api/support','POST',{tipo:f.get('tipo'),assunto:f.get('assunto'),conteudo:f.get('conteudo'),anexo_url:attachment?.path,anexo_nome:attachment?.name,anexo_tipo:attachment?.type});await loadMerchantTickets();await openSupportThread(result.atendimento.id,false);notify('Chamado enviado.');}catch(err){notify(err.message);}});document.querySelectorAll('[data-support-open]').forEach(b=>b.onclick=()=>openSupportThread(b.dataset.supportOpen,false));document.querySelector('#support-reply-form')?.addEventListener('submit',e=>{e.preventDefault();sendSupportMessage(false);});bindSupportPreviews();}
 function adminPanel() {
   const active = adminMerchants.filter(m => m.status_assinatura === 'ativa' && (!m.fim_assinatura || Date.parse(m.fim_assinatura) >= Date.now())).length;
   const pending = adminMerchants.filter(m => m.status_assinatura === 'pendente').length;
   const expired = adminMerchants.filter(m => m.status_assinatura !== 'ativa' || (m.fim_assinatura && Date.parse(m.fim_assinatura) < Date.now())).length;
   app.innerHTML = `<main class="admin-shell"><header class="admin-header"><div>${brand()}<p class="eyebrow">CENTRAL DE CONTROLE</p><h1>Painel administrativo</h1><p>Gerencie comerciantes e assinaturas do PedeIA.</p></div><div class="admin-user"><span>${esc(authenticatedUser?.email || '')}</span><button class="secondary-button" data-action="logout">Sair</button></div></header><section class="admin-stats"><article><span>Comerciantes</span><strong>${adminMerchants.length}</strong></article><article><span>Assinaturas ativas</span><strong>${active}</strong></article><article><span>Pendentes</span><strong>${pending}</strong></article><article><span>Expiradas / suspensas</span><strong>${expired}</strong></article></section><section class="admin-list"><div class="admin-list-heading"><div><h2>Comerciantes</h2><p>Ative, renove ou suspenda o acesso.</p></div><button class="secondary-button" data-admin-refresh>Atualizar</button></div>${adminMerchants.length ? adminMerchants.map(m => { const exp = m.fim_assinatura ? new Date(m.fim_assinatura).toLocaleDateString('pt-BR') : 'Sem prazo'; const live = m.status_assinatura === 'ativa' && (!m.fim_assinatura || Date.parse(m.fim_assinatura) >= Date.now()); return `<article class="admin-merchant"><div class="admin-merchant-info"><strong>${esc(m.nome || 'Comerciante')}</strong><span>${esc(m.email || '')}</span><small>${esc(m.loja_nome || 'Loja ainda não cadastrada')} · ${Number(m.total_pedidos || 0)} pedidos</small></div><div class="admin-merchant-status"><b class="admin-status ${live ? 'active' : m.status_assinatura === 'pendente' ? 'pending' : 'blocked'}">${live ? 'Ativa' : esc(m.status_assinatura || 'pendente')}</b><small>Vencimento: ${exp}</small></div><div class="admin-actions"><button class="primary-button" data-admin-status="ativa" data-admin-id="${m.id}">Ativar 30 dias</button><button class="secondary-button" data-admin-message="${m.id}">Enviar mensagem</button><button class="secondary-button" data-admin-status="suspensa" data-admin-id="${m.id}">Suspender</button><button class="secondary-button" data-admin-status="pendente" data-admin-id="${m.id}">Pendente</button></div></article>`; }).join('') : '<p class="admin-empty">Nenhum comerciante cadastrado ainda.</p>'}</section><section class="admin-list support-admin"><div class="admin-list-heading"><div><h2>Central de atendimento</h2><p>Mensagens, cobranças e chamados dos comerciantes.</p></div><button class="secondary-button" data-support-refresh>Atualizar</button></div><div class="support-layout"><div class="support-list">${adminTickets.map(t=>`<article class="support-ticket-wrap ${supportThread===t.id?'selected':''}"><button class="support-ticket" data-admin-thread="${t.id}"><strong>${esc(t.loja_nome||t.comerciante_nome||'Comerciante')}</strong><small>${esc(t.tipo)} · ${esc(t.status)}</small><span>${esc(t.assunto)} — ${esc(t.ultima_mensagem||'')}</span></button><div class="support-ticket-controls"><label>Status<select data-ticket-status="${t.id}"><option value="novo" ${t.status==='novo'?'selected':''}>Novo</option><option value="em_andamento" ${t.status==='em_andamento'?'selected':''}>Em andamento</option><option value="resolvido" ${t.status==='resolvido'?'selected':''}>Resolvido</option></select></label><button type="button" class="secondary-button" data-ticket-delete="${t.id}">Excluir</button></div></article>`).join('')||'<p class="admin-empty">Nenhum atendimento recebido.</p>'}</div><div class="support-conversation"><h3>${supportThread?(adminTickets.find(t=>t.id===supportThread)?.assunto||'Conversa'): 'Selecione um atendimento'}</h3><div class="support-messages">${supportThread?supportMessagesHtml():'<p class="admin-empty">Selecione uma conversa para responder.</p>'}</div>${supportThread?`<form id="support-reply-form" class="support-compose"><textarea name="conteudo" placeholder="Digite sua resposta"></textarea><label class="support-file">Anexar QR Code, imagem ou PDF<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar resposta</button></form>`:''}</div></div></section></main>`;
+  bindSupportPreviews();
   document.querySelector('[data-support-refresh]')?.addEventListener('click',async()=>{try{await loadAdminTickets();adminPanel();}catch(e){notify(e.message);}});
   document.querySelectorAll('[data-admin-thread]').forEach(b=>b.onclick=()=>openSupportThread(b.dataset.adminThread,true));
   document.querySelectorAll('[data-ticket-status]').forEach(select=>select.addEventListener('change',async()=>{const id=select.dataset.ticketStatus;try{await supportRequest(`/api/admin/support/${encodeURIComponent(id)}`,'PATCH',{status:select.value});await loadAdminTickets();adminPanel();notify('Status do chamado atualizado.');}catch(e){notify(e.message);}}));
@@ -1078,7 +1080,7 @@ function orderDetails(order) {
       <p>${esc(order.customer || 'Cliente')} · ${order.fulfillment === 'delivery' ? esc(order.address || 'Endereco nao informado') : 'Retirada no local'}</p>
     </div>
     <div class="detail-items">
-      ${(order.items || []).map((item) => `<div><strong>${item.quantity}x ${esc(item.name)}</strong><small>${esc(item.description || '')}</small></div>`).join('') || '<p>Itens registrados no pedido.</p>'}
+      ${(order.items || []).map((item) => `<div><strong>${item.quantity}x ${esc(item.name)}</strong><small>${esc(item.description || '')}</small>${item.selections?.length?`<small>${item.selections.map(x=>`${esc(x.group)}: ${esc(x.name)}`).join(' · ')}</small>`:''}${item.notes?`<small>Obs.: ${esc(item.notes)}</small>`:''}</div>`).join('') || '<p>Itens registrados no pedido.</p>'}
     </div>
     <div class="detail-chat">
       <strong>Conversa com este cliente</strong>
@@ -1533,7 +1535,7 @@ function customerProduct(product) {
         <p>${esc(product.description)}</p>
         <strong>${money(product.price)}</strong>
       </div>
-      <button class="add-food" data-action="add-cart" data-id="${product.id}">Adicionar</button>
+      <button class="add-food" data-action="add-cart" data-id="${product.id}">${product.options?.length ? 'Personalizar' : 'Adicionar'}</button>
     </article>
   `;
 }
@@ -1829,11 +1831,9 @@ function handleAction(event) {
   if (action === 'add-cart') {
     const product = state.products.find((item) => String(item.id) === String(button.dataset.id));
     if (!product) return;
-    const current = state.cart.find((item) => item.id === product.id);
-    if (current) current.quantity += 1;
-    else state.cart.push({ ...product, quantity: 1, notes: '' });
-    save();
-    return customerShop();
+    if (product.options?.some((group) => (group.choices || []).length)) return productOptionsDialog(product);
+    addConfiguredProduct(product, [], 0);
+    return;
   }
 
   if (action === 'open-cart') return cartDialog();
@@ -1900,7 +1900,7 @@ function buildReceiptMarkup(order, config = state.printerConfig, preview = false
   const notes = config.includeNotes && order.notes ? `<div class="receipt-note"><span>Obs.</span><strong>${esc(order.notes)}</strong></div>` : '';
   const items = config.includeItems ? (order.items || []).map((item) => `
     <div class="receipt-item">
-      <div><strong>${item.quantity}x ${esc(item.name)}</strong><small>${esc(item.description || '')}</small></div>
+      <div><strong>${item.quantity}x ${esc(item.name)}</strong><small>${esc(item.description || '')}</small>${item.selections?.length?`<small>${item.selections.map(x=>`${esc(x.group)}: ${esc(x.name)}`).join(' · ')}</small>`:''}${item.notes?`<small>Obs.: ${esc(item.notes)}</small>`:''}</div>
       <span>${money(item.price * (item.quantity || 1))}</span>
     </div>
   `).join('') : '';
@@ -2008,48 +2008,63 @@ function categoryDialog() {
 
 function productDialog(id) {
   const product = state.products.find((item) => String(item.id) === String(id));
+  const groups = product?.options || [];
+  const getGroup = (key) => groups.find((g) => g.key === key)?.choices || [];
+  const choicesText = (key) => getGroup(key).map((c) => `${c.name}${Number(c.price) ? `|${Number(c.price)}` : ''}`).join('\n');
+  const optionBlock = (key, title, hint, multi = false) => `
+    <label class="option-config-label"><strong>${title}</strong><small>${hint}</small>
+      <textarea name="${key}" rows="3" placeholder="Ex.: ${key === 'flavors' ? 'Calabresa|5' : key === 'edges' ? 'Catupiry|8' : 'Bacon|3'}">${esc(choicesText(key))}</textarea>
+    </label>`;
   showDialog(`
-    <div class="dialog-head">
-      <span class="category-icon">Produto</span>
-      <h2>${product ? 'Editar produto' : 'Novo produto'}</h2>
-      <p>Foto, categoria, descricao e preco em um so lugar.</p>
-    </div>
+    <div class="dialog-head"><span class="category-icon">Produto</span><h2>${product ? 'Editar produto' : 'Novo produto'}</h2><p>Cadastre o item e configure como o cliente poderá personalizar o pedido.</p></div>
     <form id="product-form" class="dialog-form">
       <label class="photo-picker">+<span>Adicionar foto<input name="photo" type="file" accept="image/*"></span></label>
-      <label>Nome<input name="name" required value="${esc(product?.name || '')}" placeholder="Ex.: X-Bacon especial"></label>
+      <label>Nome<input name="name" required value="${esc(product?.name || '')}" placeholder="Ex.: Pizza grande"></label>
       <label>Categoria<select name="category" required>${state.categories.map((category) => `<option ${product?.category === category ? 'selected' : ''}>${esc(category)}</option>`).join('')}</select></label>
-      <label>Descricao<textarea name="description" required placeholder="Ingredientes, tamanho e diferenciais.">${esc(product?.description || '')}</textarea></label>
-      <label>Preco<input name="price" type="number" min="0.01" step="0.01" required value="${product?.price || ''}" placeholder="0,00"></label>
+      <label>Descrição<textarea name="description" required placeholder="Ingredientes, tamanho e diferenciais.">${esc(product?.description || '')}</textarea></label>
+      <label>Preço base<input name="price" type="number" min="0.01" step="0.01" required value="${product?.price || ''}" placeholder="0,00"></label>
+      <div class="product-options-config"><h3>Personalização do pedido</h3><p>Opcional. Cadastre uma opção por linha. Use <code>Nome|Preço adicional</code>; deixe o preço de fora para opções sem custo.</p>
+        <label>Máximo de sabores (pizza)<input name="flavorMax" type="number" min="1" max="6" value="${Number(groups.find(g=>g.key==='flavors')?.max || 1)}"></label>
+        ${optionBlock('flavors','Sabores','Para pizza ou produtos que permitem escolher sabores.')}
+        ${optionBlock('edges','Bordas','Bordas recheadas ou tipos de acabamento.')}
+        ${optionBlock('extras','Adicionais','Ingredientes extras, bebidas ou complementos.')}
+      </div>
       <button class="primary-button">Salvar produto</button>
-    </form>
-  `);
+    </form>`);
 
   document.querySelector('#product-form').onsubmit = (event) => {
     event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-
+    const form = event.currentTarget, data = new FormData(form);
+    const parseChoices = (key) => String(data.get(key) || '').split('\n').map(line=>line.trim()).filter(Boolean).map(line=>{
+      const [name,...priceParts]=line.split('|'); return {id:`${key}-${slug(name)}-${Math.random().toString(36).slice(2,7)}`,name:name.trim().slice(0,70),price:Math.max(0,Number(priceParts.join('|').replace(',','.'))||0)};
+    }).filter(c=>c.name);
+    const flavors=parseChoices('flavors'), edges=parseChoices('edges'), extras=parseChoices('extras');
+    const options=[];
+    if(flavors.length) options.push({key:'flavors',title:'Escolha os sabores',type:'multi',min:1,max:Math.max(1,Math.min(6,Number(data.get('flavorMax')||1))),choices:flavors});
+    if(edges.length) options.push({key:'edges',title:'Escolha a borda',type:'single',min:0,max:1,choices:edges});
+    if(extras.length) options.push({key:'extras',title:'Adicionais',type:'multi',min:0,max:extras.length,choices:extras});
     const finish = (photo) => {
-      const next = {
-        id: product?.id || Date.now(),
-        name: String(data.get('name') || '').trim(),
-        category: String(data.get('category') || state.categories[0] || 'Geral'),
-        description: String(data.get('description') || '').trim(),
-        price: Number(data.get('price') || 0),
-        photo: photo || product?.photo || null,
-        available: product?.available ?? true
-      };
-
-      if (product) Object.assign(product, next);
-      else state.products.push(next);
-
-      closeDialog();
-      renderSaved();
+      const next={id:product?.id||Date.now(),name:String(data.get('name')||'').trim(),category:String(data.get('category')||state.categories[0]||'Geral'),description:String(data.get('description')||'').trim(),price:Number(data.get('price')||0),photo:photo||product?.photo||null,available:product?.available??true,options};
+      if(product) Object.assign(product,next); else state.products.push(next);
+      closeDialog(); renderSaved();
     };
-
-    const file = form.querySelector('[name=photo]').files[0];
-    file ? readImage(file, finish) : finish(null);
+    const file=form.querySelector('[name=photo]').files[0]; file?readImage(file,finish):finish(null);
   };
+}
+
+function addConfiguredProduct(product, selections, extraPrice) {
+  const cartItem={...product,cartKey:`${product.id}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,quantity:1,notes:'',basePrice:Number(product.price||0),price:Number(product.price||0)+Number(extraPrice||0),selections};
+  state.cart.push(cartItem); save(); closeDialog(); customerShop(); notify('Produto adicionado à sacola.');
+}
+
+function productOptionsDialog(product) {
+  const groups=(product.options||[]).filter(g=>(g.choices||[]).length);
+  const groupMarkup=groups.map(group=>`<section class="customer-option-group"><div class="option-group-heading"><strong>${esc(group.title||group.key)}</strong><small>${group.type==='multi'?`Escolha até ${group.max}`:'Escolha uma opção' }${group.min?` · mínimo ${group.min}`:''}</small></div>${group.choices.map(choice=>`<label class="customer-option-choice"><input type="${group.type==='multi'?'checkbox':'radio'}" name="option-${esc(group.key)}" value="${esc(choice.id)}" data-option-group="${esc(group.key)}" data-option-name="${esc(choice.name)}" data-option-price="${Number(choice.price)||0}"><span>${esc(choice.name)}</span><b>${Number(choice.price)?`+ ${money(choice.price)}`:'Grátis'}</b></label>`).join('')}</section>`).join('');
+  showDialog(`<div class="dialog-head"><span class="category-icon">Personalizar</span><h2>${esc(product.name)}</h2><p>${esc(product.description||'Escolha as opções do seu pedido.')}</p></div><form id="custom-product-form" class="dialog-form"><div class="option-base-price">Preço base <strong>${money(product.price)}</strong></div>${groupMarkup}<label>Observações<textarea name="notes" placeholder="Ex.: retirar cebola (opcional)"></textarea></label><div class="option-total"><span>Total do item</span><strong id="custom-product-total">${money(product.price)}</strong></div><button class="primary-button">Adicionar à sacola</button></form>`);
+  const form=document.querySelector('#custom-product-form');
+  const update=()=>{let total=Number(product.price||0);groups.forEach(g=>form.querySelectorAll(`[data-option-group="${g.key}"]:checked`).forEach(input=>total+=Number(input.dataset.optionPrice||0)));document.querySelector('#custom-product-total').textContent=money(total);};
+  form.querySelectorAll('[data-option-group]').forEach(input=>input.addEventListener('change',()=>{const group=groups.find(g=>g.key===input.dataset.optionGroup);if(group?.type==='multi'&&form.querySelectorAll(`[data-option-group="${group.key}"]:checked`).length>group.max){input.checked=false;notify(`Selecione no máximo ${group.max} opção(ões) em ${group.title}.`);}update();}));
+  form.onsubmit=e=>{e.preventDefault();const selections=[];let extra=0,valid=true;groups.forEach(g=>{const checked=[...form.querySelectorAll(`[data-option-group="${g.key}"]:checked`)];if(checked.length<g.min||checked.length>g.max){valid=false;notify(`${g.title}: selecione ${g.min?`pelo menos ${g.min}`:'até '+g.max} opção(ões).`);return;}checked.forEach(input=>{selections.push({group:g.title,name:input.dataset.optionName,price:Number(input.dataset.optionPrice||0)});extra+=Number(input.dataset.optionPrice||0);});});if(!valid)return;const notes=String(new FormData(form).get('notes')||'').trim();addConfiguredProduct(product,selections,extra);const item=state.cart[state.cart.length-1];item.notes=notes;save();};
 }
 
 function showDialog(content) {
@@ -2090,9 +2105,10 @@ function cartDialog() {
           <div>
             <strong>${esc(item.name)}</strong>
             <small>${money(item.price)} · ${item.quantity}x</small>
+            ${item.selections?.length ? `<small class="cart-customizations">${item.selections.map(x=>`${esc(x.group)}: ${esc(x.name)}${x.price?` (+${money(x.price)})`:''}`).join(' · ')}</small>` : ''}
             <label class="note-field">
               <span>OBSERVACOES DO ITEM</span>
-              <input data-note="${item.id}" value="${esc(item.notes || '')}" placeholder="Ex.: sem cebola, bem passado...">
+              <input data-note="${item.cartKey || item.id}" value="${esc(item.notes || '')}" placeholder="Ex.: sem cebola, bem passado...">
               <small>Opcional - a loja vera este recado no pedido</small>
             </label>
           </div>
@@ -2104,7 +2120,7 @@ function cartDialog() {
 
   document.querySelectorAll('[data-note]').forEach((input) => {
     input.oninput = () => {
-      const item = state.cart.find((entry) => String(entry.id) === String(input.dataset.note));
+      const item = state.cart.find((entry) => String(entry.cartKey || entry.id) === String(input.dataset.note));
       if (item) item.notes = input.value;
       save();
     };
@@ -2166,6 +2182,8 @@ function checkoutDialog() {
       description: item.description,
       quantity: item.quantity,
       notes: item.notes,
+      selections: item.selections || [],
+      basePrice: item.basePrice ?? item.price,
       price: item.price
     }));
 
