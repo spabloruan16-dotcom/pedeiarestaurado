@@ -42,13 +42,3 @@ A taxa de entrega e os cupons ainda não são calculados no servidor nesta etapa
 No checkout de uma vitrine pública, o cliente recebe um link privado para acompanhar o status. A localização é exibida quando o entregador autoriza e compartilha o GPS pela página do motoboy. A página atualiza o status a cada 12 segundos; não é um canal GPS contínuo em segundo plano, pois o navegador pode suspender a página.
 
 A sequência automática de paradas por proximidade ainda depende de serviço de geocodificação/rotas e configuração de provedor. Nesta versão, o botão de rota abre os destinos atribuídos no Google Maps na ordem da lista, sem prometer otimização automática.
-
-
-## OpenStreetMap + openrouteservice (ORS)
-- O mapa do portal do entregador e do acompanhamento do cliente utiliza Leaflet com os tiles do OpenStreetMap.
-- A rota do entregador é calculada pelo servidor com a API openrouteservice; a chave não é enviada ao navegador.
-- Configure `ORS_API_KEY` como variável de ambiente no serviço do servidor (Render ou hospedagem utilizada). Obtenha a chave em https://openrouteservice.org/dev/#/signup. Nunca coloque a chave no `app.js`, HTML ou repositório.
-- O endpoint `GET /api/courier-route?token=...` geocodifica até 12 endereços ativos do entregador e calcula uma rota driving-car. A sequência de paradas é uma heurística de vizinho mais próximo em distância direta, iniciando na posição GPS recente do entregador, quando disponível; sem GPS, parte do primeiro pedido. Não é uma solução de otimização global nem considera janelas de horário, restrições de tráfego em tempo real ou capacidade do veículo.
-- O serviço de rotas retorna distância e duração estimadas. A página do motoboy mostra a linha de rota e marcadores, e o acompanhamento do cliente mostra o marcador da última posição GPS recebida.
-- Após definir `ORS_API_KEY`, reinicie/republique o servidor. Teste com endereços válidos e confirme cotas/termos do plano ORS. A disponibilidade de tiles públicos do OpenStreetMap está sujeita à política de uso do serviço; para tráfego elevado, considere provedor de tiles dedicado.
-- Esta atualização foi verificada estaticamente (sintaxe JavaScript). Requer teste de integração com a chave ORS e banco Supabase do ambiente de produção.

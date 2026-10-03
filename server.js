@@ -635,36 +635,6 @@ http.createServer((request, response) => {
     })().catch(error=>{console.error("Falha central entregadores:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel concluir a operacao de entregadores"});});
     return;
   }
-  if (pathname === "/api/courier-route" && request.method === "GET") {
-    (async()=>{
-      if(!subscriptionPool)return respondJson(response,503,{error:"Banco indisponivel"});
-      const apiKey=String(process.env.ORS_API_KEY||"").trim();
-      if(!apiKey)return respondJson(response,503,{error:"Configure ORS_API_KEY no servidor para ativar rotas inteligentes"});
-      const token=String(url.searchParams.get("token")||"");
-      if(token.length<30)return respondJson(response,401,{error:"Link invalido ou expirado"});
-      const hash=crypto.createHash("sha256").update(token).digest("hex");
-      const f=await subscriptionPool.query(`SELECT e.id,e.ultima_latitude,e.ultima_longitude FROM public.entregadores e WHERE e.token_hash=$1 AND e.ativo=true LIMIT 1`,[hash]);
-      if(!f.rowCount)return respondJson(response,403,{error:"Acesso do entregador desativado"});
-      const courier=f.rows[0];
-      const r=await subscriptionPool.query(`SELECT p.id,p.endereco,p.created_at FROM public.pedidos p WHERE p.entregador_id=$1 AND p.tipo_entrega='delivery' AND p.endereco IS NOT NULL AND p.status NOT IN ('Entregue','Cancelado','Cancelada') ORDER BY p.created_at LIMIT 12`,[courier.id]);
-      if(!r.rowCount)return respondJson(response,200,{route:null,stops:[],message:"Nenhuma entrega com endereco disponivel"});
-      const geocode=async(address)=>{
-        const u=new URL("https://api.openrouteservice.org/geocode/search");u.searchParams.set("api_key",apiKey);u.searchParams.set("text",address);u.searchParams.set("size","1");
-        const resp=await fetch(u,{signal:AbortSignal.timeout(12000)});if(!resp.ok)throw new Error("Falha na geocodificacao ORS ("+resp.status+")");const data=await resp.json();const xy=data.features?.[0]?.geometry?.coordinates;if(!Array.isArray(xy)||xy.length<2)throw new Error("Nao foi possivel localizar o endereco: "+address);return [Number(xy[0]),Number(xy[1])];
-      };
-      const stops=[];for(const o of r.rows){stops.push({id:o.id,address:o.endereco,coordinates:await geocode(o.endereco)});}
-      let start=null;if(courier.ultima_latitude!==null&&courier.ultima_longitude!==null)start=[Number(courier.ultima_longitude),Number(courier.ultima_latitude)];
-      const distance=(a,b)=>{const rad=x=>x*Math.PI/180,lat1=rad(a[1]),lat2=rad(b[1]),dlat=lat2-lat1,dlon=rad(b[0]-a[0]);const h=Math.sin(dlat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dlon/2)**2;return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));};
-      const remaining=[...stops],ordered=[];let cursor=start;
-      if(!cursor){ordered.push(remaining.shift());cursor=ordered[0].coordinates;}
-      while(remaining.length){let best=0,bestD=Infinity;for(let i=0;i<remaining.length;i++){const d=distance(cursor,remaining[i].coordinates);if(d<bestD){bestD=d;best=i;}}const next=remaining.splice(best,1)[0];ordered.push(next);cursor=next.coordinates;}
-      const coords=[...(start?[start]:[]),...ordered.map(x=>x.coordinates)];
-      if(coords.length<2)return respondJson(response,200,{route:null,stops:ordered});
-      const directions=await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson",{method:"POST",headers:{"Authorization":apiKey,"Content-Type":"application/json"},body:JSON.stringify({coordinates:coords,instructions:false}),signal:AbortSignal.timeout(20000)});
-      if(!directions.ok)throw new Error("Falha ao calcular rota ORS ("+directions.status+")");const geo=await directions.json();const summary=geo.features?.[0]?.properties?.summary||{};
-      return respondJson(response,200,{route:geo.features?.[0]?.geometry||null,stops:ordered,distance_m:summary.distance||null,duration_s:summary.duration||null,origin:start?{coordinates:start}:null,optimization:"sequencia aproximada por proximidade em linha reta; trajeto calculado pelo ORS"});
-    })().catch(e=>{console.error("Falha rota ORS:",e.message);if(!response.headersSent)respondJson(response,502,{error:e.message||"Nao foi possivel calcular a rota"});});return;
-  }
   if (pathname === "/api/courier" && ["GET","PATCH"].includes(request.method)) {
     (async()=>{
       if(!subscriptionPool)return respondJson(response,503,{error:"Banco indisponivel"});
