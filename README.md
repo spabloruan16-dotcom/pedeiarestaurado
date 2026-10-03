@@ -38,3 +38,7 @@ Depois do deploy, teste `https://SEU-APP.onrender.com/api/health`. A resposta es
 ```
 
 O arquivo `render.yaml` ja guarda essa configuracao para o deploy automatico pelo Render Blueprint.
+
+
+### Acompanhamento público do pedido
+Após o checkout pela vitrine pública, o cliente recebe um link individual de acompanhamento. A página `/acompanhar?token=...` consulta o status periodicamente e exibe a última localização GPS compartilhada pelo entregador em um mapa OpenStreetMap, além de permitir abrir o ponto no Google Maps. O rastreamento depende de HTTPS, permissão de geolocalização no dispositivo do entregador e publicação do servidor atualizado.

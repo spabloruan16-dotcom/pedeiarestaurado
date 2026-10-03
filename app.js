@@ -496,10 +496,11 @@ async function openSupportThread(id,admin){const r=await supportRequest(`${admin
 function bindSupportPreviews(){document.querySelectorAll('[data-support-preview]').forEach(button=>button.addEventListener('click',()=>{const url=button.dataset.supportPreview;const alt=button.dataset.supportAlt||'Imagem anexada';showDialog(`<div class="support-image-modal"><img src="${esc(url)}" alt="${esc(alt)}"></div>`);}));}
 function supportMessagesHtml(){return supportMessagesList.map(m=>{const url=m.signedUrl||'';const mime=String(m.anexo_tipo||'').toLowerCase();const filename=String(m.anexo_nome||'Anexo');const image=mime.startsWith('image/')||/\.(jpe?g|png|webp|gif|avif)$/i.test(filename);const pdf=mime==='application/pdf'||/\.pdf$/i.test(filename);const attachment=url?(image?`<button type="button" class="support-image-link" data-support-preview="${esc(url)}" data-support-alt="${esc(filename)}" aria-label="Ampliar imagem: ${esc(filename)}"><img class="support-image-preview" src="${esc(url)}" alt="${esc(filename)}" loading="lazy"><span>Ampliar imagem</span></button>`:pdf?`<a class="support-pdf-link" href="${esc(url)}" target="_blank" rel="noopener"><span aria-hidden="true">📄</span><span><strong>${esc(filename)}</strong><small>Abrir PDF em nova aba</small></span><span aria-hidden="true">↗</span></a>`:`<a href="${esc(url)}" target="_blank" rel="noopener">📎 ${esc(filename)}</a>`):'';return `<article class="support-message ${m.remetente_tipo==='admin'?'support-mine':''}"><small>${m.remetente_tipo==='admin'?'Administrador':'Comerciante'} · ${new Date(m.created_at).toLocaleString('pt-BR')}</small>${m.conteudo?`<p>${esc(m.conteudo)}</p>`:''}${attachment}</article>`;}).join('')||'<p class="admin-empty">Nenhuma mensagem ainda.</p>'; }
 async function sendSupportMessage(admin){const form=document.querySelector('#support-reply-form');if(!form||!supportThread)return;const fd=new FormData(form);const conteudo=String(fd.get('conteudo')||'').trim();const file=form.querySelector('input[type=file]')?.files?.[0];try{let attachment=null;if(file){const owner=admin?adminTickets.find(t=>t.id===supportThread)?.comerciante_id:authenticatedUser.id;attachment=await supportUpload(file,owner);}await supportRequest(`${admin?'/api/admin/support':'/api/support'}/${encodeURIComponent(supportThread)}/messages`,'POST',{conteudo,anexo_url:attachment?.path,anexo_nome:attachment?.name,anexo_tipo:attachment?.type});await openSupportThread(supportThread,admin);notify('Mensagem enviada.');}catch(e){notify(e.message||'Não foi possível enviar.');}}
-async function courierRequest(path,method='GET',body){const {data,error}=await window.pedeiaSupabase.auth.getSession();const token=data?.session?.access_token;if(error||!token)throw new Error('Sua sessão expirou. Entre novamente.');const response=await fetch(path,{method,headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Falha na central de entregadores.');return result;}
+async function merchantApiRequest(path,method='GET',body){const {data,error}=await window.pedeiaSupabase.auth.getSession();const token=data?.session?.access_token;if(error||!token)throw new Error('Sua sessão expirou. Entre novamente.');const response=await fetch(path,{method,headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Falha na operação.');return result;}
+async function courierRequest(path,method='GET',body){return merchantApiRequest(path,method,body);}
 async function loadCouriers(){const r=await courierRequest('/api/merchant/couriers');merchantCouriers=r.entregadores||[];couriersLoaded=true;}
 function couriersView(){return `<section class="page-intro"><div><p class="eyebrow">LOGÍSTICA DA LOJA</p><h1>Central de entregadores</h1><p class="intro-copy">Cadastre motoboys, compartilhe o acesso individual e atribua pedidos para entrega.</p></div><button class="secondary-button" data-courier-refresh>Atualizar</button></section><section class="panel courier-panel"><div class="panel-heading"><div><h2>Cadastrar motoboy</h2><p>O link de acesso é exibido uma única vez ao criar ou renovar.</p></div></div><form id="courier-create-form" class="courier-form"><label>Nome completo<input name="nome" required maxlength="120" placeholder="Nome do entregador"></label><label>Telefone<input name="telefone" maxlength="40" placeholder="(00) 00000-0000"></label><label>Veículo<input name="veiculo" maxlength="80" placeholder="Moto, placa opcional"></label><button class="primary-button" type="submit">Cadastrar e gerar link</button></form>${newlyCreatedCourierLink?`<div class="courier-link-notice"><strong>Link individual criado</strong><input readonly value="${esc(newlyCreatedCourierLink)}" id="courier-generated-link"><button type="button" class="secondary-button" data-courier-copy>Copiar link</button><small>Guarde este link e envie apenas ao entregador. Se perdê-lo, desative este cadastro e crie outro.</small></div>`:''}</section><section class="courier-list">${merchantCouriers.map(c=>`<article class="panel courier-card"><div class="courier-card-top"><div><strong>${esc(c.nome)}</strong><small>${esc(c.telefone||'Sem telefone')} ${c.veiculo?'· '+esc(c.veiculo):''}</small></div><span class="courier-state ${c.ativo?'active':'inactive'}">${c.ativo?'Ativo':'Desativado'}</span></div><p>${Number(c.pedidos_ativos||0)} pedido(s) ativo(s)</p><div class="courier-actions"><button class="secondary-button" data-courier-assign="${c.id}" ${!c.ativo?'disabled':''}>Atribuir pedido</button><button class="secondary-button" data-courier-toggle="${c.id}" data-active="${c.ativo?'true':'false'}">${c.ativo?'Desativar':'Ativar'}</button><button class="secondary-button" data-courier-delete="${c.id}">Excluir</button></div></article>`).join('')||'<div class="panel"><p>Nenhum entregador cadastrado ainda.</p></div>'}</section><section class="panel courier-note"><strong>Sobre as rotas</strong><p>O motoboy acessa seus pedidos por um link protegido. A rota abre no Google Maps com os endereços atribuídos. A otimização automática por proximidade e o rastreamento GPS contínuo dependem da próxima etapa de geolocalização e mapas.</p></section>`;}
-function bindCouriers(){document.querySelector('#courier-create-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget;const data=new FormData(form);try{const r=await courierRequest('/api/merchant/couriers','POST',{nome:data.get('nome'),telefone:data.get('telefone'),veiculo:data.get('veiculo')});newlyCreatedCourierLink=`${location.origin}/motoboy?token=${encodeURIComponent(r.token)}`;await loadCouriers();render();notify('Entregador cadastrado. Copie e compartilhe o link.');}catch(err){notify(err.message);}});document.querySelector('[data-courier-refresh]')?.addEventListener('click',async()=>{try{await loadCouriers();render();}catch(e){notify(e.message);}});document.querySelector('[data-courier-copy]')?.addEventListener('click',()=>{const input=document.querySelector('#courier-generated-link');input?.select();if(input)navigator.clipboard?.writeText(input.value).then(()=>notify('Link copiado.')).catch(()=>notify('Selecione e copie o link manualmente.'));});document.querySelectorAll('[data-courier-toggle]').forEach(b=>b.onclick=async()=>{try{await courierRequest(`/api/merchant/couriers/${b.dataset.courierToggle}`,'PATCH',{ativo:b.dataset.active!=='true'});await loadCouriers();render();}catch(e){notify(e.message);}});document.querySelectorAll('[data-courier-delete]').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este entregador? Os pedidos serão desvinculados.'))return;try{await courierRequest(`/api/merchant/couriers/${b.dataset.courierDelete}`,'DELETE');await loadCouriers();render();notify('Entregador removido.');}catch(e){notify(e.message);}});document.querySelectorAll('[data-courier-assign]').forEach(b=>b.onclick=async()=>{const id=prompt('Informe o UUID do pedido existente no Supabase para atribuí-lo:');if(!id)return;try{await courierRequest(`/api/merchant/couriers/${b.dataset.courierAssign}/assign`,'POST',{pedido_id:id.trim()});await loadCouriers();render();notify('Pedido atribuído ao entregador.');}catch(e){notify(e.message);}});}
+function bindCouriers(){document.querySelector('#courier-create-form')?.addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget;const data=new FormData(form);try{const r=await courierRequest('/api/merchant/couriers','POST',{nome:data.get('nome'),telefone:data.get('telefone'),veiculo:data.get('veiculo')});newlyCreatedCourierLink=`${location.origin}/motoboy?token=${encodeURIComponent(r.token)}`;await loadCouriers();render();notify('Entregador cadastrado. Copie e compartilhe o link.');}catch(err){notify(err.message);}});document.querySelector('[data-courier-refresh]')?.addEventListener('click',async()=>{try{await loadCouriers();render();}catch(e){notify(e.message);}});document.querySelector('[data-courier-copy]')?.addEventListener('click',()=>{const input=document.querySelector('#courier-generated-link');input?.select();if(input)navigator.clipboard?.writeText(input.value).then(()=>notify('Link copiado.')).catch(()=>notify('Selecione e copie o link manualmente.'));});document.querySelectorAll('[data-courier-toggle]').forEach(b=>b.onclick=async()=>{try{await courierRequest(`/api/merchant/couriers/${b.dataset.courierToggle}`,'PATCH',{ativo:b.dataset.active!=='true'});await loadCouriers();render();}catch(e){notify(e.message);}});document.querySelectorAll('[data-courier-delete]').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este entregador? Os pedidos serão desvinculados.'))return;try{await courierRequest(`/api/merchant/couriers/${b.dataset.courierDelete}`,'DELETE');await loadCouriers();render();notify('Entregador removido.');}catch(e){notify(e.message);}});document.querySelectorAll('[data-courier-assign]').forEach(b=>b.onclick=async()=>{const pending=(state.orders||[]).filter(o=>o.fulfillment==='delivery'&&!['Entregue','Cancelado','Cancelada'].includes(o.status));if(!pending.length){notify('Não há pedidos de entrega disponíveis.');return;}const choices=pending.map((o,i)=>`${i+1}. ${o.customer||'Cliente'} · ${o.status} · ${o.address||'Sem endereço'}`).join('\n');const picked=prompt(`Digite o número do pedido para atribuir:\n${choices}`);if(!picked)return;const order=pending[Number(picked)-1];if(!order){notify('Número de pedido inválido.');return;}try{await courierRequest(`/api/merchant/couriers/${b.dataset.courierAssign}/assign`,'POST',{pedido_id:order.id});await loadCouriers();await loadMerchantState();render();notify('Pedido atribuído ao entregador.');}catch(e){notify(e.message);}});}
 function merchantSupportView(){const current=merchantTickets.find(t=>t.id===supportThread);return `<section class="page-intro"><div><p class="eyebrow">ATENDIMENTO PEDEIA</p><h1>Falar com o administrador</h1><p class="intro-copy">Tire dúvidas, informe problemas ou envie comprovantes de pagamento.</p></div></section><section class="panel support-layout"><div class="support-list"><form id="support-new-form" class="support-new"><h3>Abrir chamado</h3><label>Tipo<select name="tipo"><option value="suporte">Suporte técnico</option><option value="cobranca">Mensalidade / cobrança</option><option value="geral">Outro assunto</option></select></label><label>Assunto<input name="assunto" required maxlength="160" placeholder="Ex.: Problema nos pedidos"></label><label>Mensagem<textarea name="conteudo" required maxlength="10000" placeholder="Descreva como podemos ajudar"></textarea></label><label class="support-file">Anexar imagem ou PDF (opcional)<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar chamado</button></form><h3>Minhas conversas</h3>${merchantTickets.map(t=>`<button class="support-ticket ${supportThread===t.id?'selected':''}" data-support-open="${t.id}"><strong>${esc(t.assunto)}</strong><small>${esc(t.tipo)} · ${esc(t.status)} · ${new Date(t.updated_at).toLocaleDateString('pt-BR')}</small><span>${esc(t.ultima_mensagem||'')}</span></button>`).join('')||'<p class="admin-empty">Você ainda não tem chamados.</p>'}</div><div class="support-conversation"><h3>${current?esc(current.assunto):'Selecione uma conversa'}</h3><div class="support-messages">${current?supportMessagesHtml():'<p class="admin-empty">Abra um chamado ou selecione uma conversa para ver as mensagens.</p>'}</div>${current?`<form id="support-reply-form" class="support-compose"><textarea name="conteudo" placeholder="Escreva sua resposta"></textarea><label class="support-file">Anexar imagem ou PDF<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><button class="primary-button">Enviar resposta</button></form>`:''}</div></section>`;}
 function bindSupportMerchant(){document.querySelector('#support-new-form')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{const file=e.currentTarget.querySelector('input[type=file]')?.files?.[0];let attachment=null;if(file)attachment=await supportUpload(file,authenticatedUser.id);const result=await supportRequest('/api/support','POST',{tipo:f.get('tipo'),assunto:f.get('assunto'),conteudo:f.get('conteudo'),anexo_url:attachment?.path,anexo_nome:attachment?.name,anexo_tipo:attachment?.type});await loadMerchantTickets();await openSupportThread(result.atendimento.id,false);notify('Chamado enviado.');}catch(err){notify(err.message);}});document.querySelectorAll('[data-support-open]').forEach(b=>b.onclick=()=>openSupportThread(b.dataset.supportOpen,false));document.querySelector('#support-reply-form')?.addEventListener('submit',e=>{e.preventDefault();sendSupportMessage(false);});bindSupportPreviews();}
 function adminPanel() {
@@ -574,6 +575,10 @@ function startLiveRefresh() {
   window.__pedeiaLiveRefresh = setInterval(async () => {
     if (document.activeElement?.matches('input, textarea, select')) return;
     if (publicShop() !== null) {
+      const profile=JSON.parse(localStorage.getItem(clientKey)||'null')||{};
+      if(profile.lastTrackingToken && state.customerView==='tracking'){
+        try{const tr=await fetch('/api/order-track?token='+encodeURIComponent(profile.lastTrackingToken),{cache:'no-store'});if(tr.ok){const d=await tr.json(),o=state.orders.find(x=>x.id===d.pedido.id);if(o){o.status=d.pedido.status;o.updatedAt=new Date(d.pedido.updated_at).getTime();o.courierLocation=d.pedido.localizacao;render();}}}catch{}
+      }
       if (Date.now() - lastSubscriptionCheck >= 30000) {
         if (await loadPublicShopFromDatabase()) render();
       }
@@ -1373,7 +1378,7 @@ function customerShop() {
   const tracked = state.orders
     .slice()
     .reverse()
-    .find((order) => cached.name && order.customer === cached.name);
+    .find((order) => cached.lastOrderId ? order.id === cached.lastOrderId : (cached.name && order.customer === cached.name));
 
   const customerChatBadge = unreadMessagesCount('customer') > 0 ? `<span class="chat-badge">${unreadMessagesCount('customer')}</span>` : '';
   app.innerHTML = `
@@ -1472,6 +1477,7 @@ function customerTrackingPanel(order) {
           <span class="${delivered ? 'done' : ''}">Finalizado</span>
         </div>
 
+        ${order.fulfillment==='delivery' && order.status==='Em rota' || order.status==='Saiu para entrega' ? `<div class="tracking-panel"><strong>Seu pedido está a caminho</strong>${order.courierLocation?`<p>Última localização recebida: ${Number(order.courierLocation.latitude).toFixed(5)}, ${Number(order.courierLocation.longitude).toFixed(5)}</p><a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.courierLocation.latitude+','+order.courierLocation.longitude)}">Ver localização no mapa</a>`:'<p>Aguardando atualização da localização do entregador.</p>'}</div>`:''}
         <div class="tracking-meta">
           <div><span>Tempo</span><strong>${remaining(order)}</strong></div>
           <div><span>Forma</span><strong>${order.fulfillment === 'delivery' ? 'Entrega' : 'Retirada'}</strong></div>
@@ -1854,38 +1860,24 @@ function handleAction(event) {
   if (action === 'customer-chat') return customerChat();
 }
 
-function acceptOrder(id) {
-  const order = state.orders.find((item) => item.id === id);
-  if (!order) return;
-  order.status = 'Em preparo';
-  order.updatedAt = Date.now();
-  order.readyAt = Date.now() + 12 * 60000;
-  save();
-  if (state.printerConfig.autoPrint) printReceipt(order);
-  render();
-  notify(`Pedido ${order.id} aceito automaticamente.`);
+async function persistOrderStatus(order,status) {
+  if (authenticatedUser && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(order.id))) {
+    await merchantApiRequest('/api/merchant/orders','PATCH',{pedido_id:order.id,status});
+  }
+  order.status=status;order.updatedAt=Date.now();
+  if(['Pronto','Saiu para entrega','Entregue'].includes(status))order.readyAt=Date.now()+12*60000;
+  if(!authenticatedUser)save();
 }
 
-function advanceOrder(id) {
-  const order = state.orders.find((item) => item.id === id);
-  if (!order) return;
+async function acceptOrder(id) {
+  const order=state.orders.find(item=>item.id===id);if(!order)return;
+  try{await persistOrderStatus(order,'Em preparo');if(state.printerConfig.autoPrint)printReceipt(order);render();notify(`Pedido ${order.id} aceito.`);}catch(e){notify(e.message||'Não foi possível aceitar o pedido.');}
+}
 
-  const next = {
-    Aguardando: 'Em preparo',
-    'Em preparo': 'Pronto',
-    Pronto: order.fulfillment === 'delivery' ? 'Saiu para entrega' : 'Entregue',
-    'Saiu para entrega': 'Entregue'
-  };
-
-  order.status = next[order.status] || 'Entregue';
-  order.updatedAt = Date.now();
-  if (order.status === 'Pronto' || order.status === 'Saiu para entrega' || order.status === 'Entregue') {
-    order.readyAt = Date.now() + 12 * 60000;
-  }
-
-  save();
-  render();
-  notify(`Pedido ${order.id} atualizado`);
+async function advanceOrder(id) {
+  const order=state.orders.find(item=>item.id===id);if(!order)return;
+  const next={Aguardando:'Em preparo','Em preparo':'Pronto',Pronto:order.fulfillment==='delivery'?'Saiu para entrega':'Entregue','Saiu para entrega':'Entregue','Em rota':'Entregue'};
+  try{await persistOrderStatus(order,next[order.status]||'Entregue');render();notify(`Pedido ${order.id} atualizado.`);}catch(e){notify(e.message||'Não foi possível atualizar o pedido.');}
 }
 
 function sampleOrder() {
@@ -2170,7 +2162,7 @@ function checkoutDialog() {
   `);
 
   const form = document.querySelector('#checkout-form');
-  form.onsubmit = (event) => {
+  form.onsubmit = async (event) => {
     event.preventDefault();
     const data = new FormData(form);
     const fulfillment = String(data.get('fulfillment') || 'pickup');
@@ -2189,42 +2181,32 @@ function checkoutDialog() {
     }
 
     const total = state.cart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0);
-    const minutes = fulfillment === 'delivery' ? Number(state.delivery.deliveryMinutes || 45) : Number(state.delivery.pickupMinutes || 20);
     const orderItems = state.cart.map((item) => ({
-      id: item.id,
-      name: item.name,
-      description: item.description,
-      quantity: item.quantity,
-      notes: item.notes,
-      selections: item.selections || [],
-      basePrice: item.basePrice ?? item.price,
-      price: item.price
+      produto_id: item.id, quantidade: Number(item.quantity || 1), observacao: item.notes || '',
+      personalizacoes: item.selections || []
     }));
-
-    localStorage.setItem(clientKey, JSON.stringify({ name: customer, phone, address }));
-
-    const order = {
-      id: `#${Date.now().toString().slice(-4)}`,
-      customer,
-      phone,
-      address,
-      payment: String(data.get('payment') || 'Pix'),
-      fulfillment,
-      status: state.delivery.autoAccept ? 'Em preparo' : 'Aguardando',
-      total,
-      items: orderItems,
-      notes: orderItems.filter((item) => item.notes).map((item) => `${item.name}: ${item.notes}`).join(' | '),
-      createdAt: Date.now(),
-      readyAt: Date.now() + minutes * 60000,
-      updatedAt: Date.now()
-    };
-
-    state.orders.push(order);
-    state.cart = [];
-    save();
-    closeDialog();
-    render();
-    notify('Pedido enviado com sucesso!');
+    const button=form.querySelector('button[type="submit"]');if(button){button.disabled=true;button.textContent='Enviando pedido...';}
+    try {
+      let order;
+      if (publicShop()) {
+        const response=await fetch('/api/public-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({loja:publicShop(),cliente:{nome:customer,telefone:phone},tipo_entrega:fulfillment,endereco:address,pagamento:String(data.get('payment')||'Pix'),observacoes:'',itens:orderItems})});
+        const result=await response.json();if(!response.ok)throw new Error(result.error||'Não foi possível enviar o pedido.');
+        const minutes=Number(state.delivery.deliveryMinutes||45);
+        order={id:result.pedido.id,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:result.pedido.status,total:Number(result.pedido.total),items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:new Date(result.pedido.created_at).getTime(),readyAt:Date.now()+minutes*60000,updatedAt:Date.now(),trackingToken:result.tracking_token};
+        const oldProfile=JSON.parse(localStorage.getItem(clientKey)||'{}');localStorage.setItem(clientKey,JSON.stringify({ ...oldProfile,name:customer,phone,address,lastTrackingToken:result.tracking_token,lastOrderId:order.id }));
+      } else {
+        order={id:`#${Date.now().toString().slice(-4)}`,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:state.delivery.autoAccept?'Em preparo':'Aguardando',total,items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:Date.now(),readyAt:Date.now()+45*60000,updatedAt:Date.now()};
+      }
+      localStorage.setItem(clientKey,JSON.stringify({name:customer,phone,address,...(order.trackingToken?{lastTrackingToken:order.trackingToken,lastOrderId:order.id}:{})}));
+      state.orders=state.orders.filter(o=>o.id!==order.id);state.orders.push(order);state.cart=[];
+      try{localStorage.setItem(stateKey,JSON.stringify(state));}catch{}
+      if(order.trackingToken){
+        const trackingUrl=`${location.origin}/acompanhar?token=${encodeURIComponent(order.trackingToken)}`;
+        closeDialog();showDialog(`<div class="dialog-head"><span class="category-icon">Pedido confirmado</span><h2>Pedido enviado à loja!</h2><p>Guarde o link abaixo para acompanhar o andamento e a localização do entregador quando a entrega estiver em rota.</p></div><div class="dialog-form"><input id="customer-tracking-link" readonly value="${esc(trackingUrl)}" aria-label="Link de acompanhamento"><button type="button" class="primary-button" id="copy-customer-tracking">Copiar link de acompanhamento</button><a class="secondary-button" style="display:block;text-align:center;text-decoration:none" href="/acompanhar?token=${encodeURIComponent(order.trackingToken)}">Acompanhar pedido agora</a></div>`);
+        document.querySelector('#copy-customer-tracking')?.addEventListener('click',async()=>{const input=document.querySelector('#customer-tracking-link');try{await navigator.clipboard.writeText(input.value);notify('Link de acompanhamento copiado.');}catch{input.select();notify('Selecione e copie o link.');}});
+      }else{closeDialog();notify('Pedido registrado com sucesso!');}
+      render();
+    } catch(error) { notify(error.message||'Falha ao enviar pedido.');if(button){button.disabled=false;button.textContent='Enviar pedido';} }
   };
 }
 

@@ -184,6 +184,21 @@ async function loadMerchantState(user) {
   const subscription = { status_assinatura: merchant.status_assinatura || "pendente", inicio_assinatura: merchant.inicio_assinatura, fim_assinatura: merchant.fim_assinatura };
   if (!shop) return { merchant: { authUserId: merchant.id, name: merchant.nome, email: merchant.email, status_assinatura: subscription.status_assinatura, fim_assinatura: subscription.fim_assinatura }, subscription, shop: null, categories: [], products: [] };
   const loaded = await loadShopState(shop, merchant, true);
+  const ordersResult = await subscriptionPool.query(`
+    SELECT p.id,p.status,p.endereco,p.tipo_entrega,p.pagamento,p.observacoes,p.total,p.taxa_entrega,p.desconto,p.codigo_cupom,p.previsao_entrega,p.created_at,p.updated_at,
+           c.nome AS cliente_nome,c.telefone AS cliente_telefone,
+           COALESCE(json_agg(json_build_object('id',i.produto_id,'name',i.produto_nome,'description',i.produto_descricao,'quantity',i.quantidade,'price',i.preco_unitario,'notes',i.observacao,'selections',i.personalizacoes)) FILTER (WHERE i.id IS NOT NULL),'[]') AS items
+    FROM public.pedidos p JOIN public.clientes c ON c.id=p.cliente_id
+    LEFT JOIN public.itens_do_pedido i ON i.pedido_id=p.id
+    WHERE p.loja_id=$1 GROUP BY p.id,c.nome,c.telefone ORDER BY p.created_at DESC LIMIT 300`, [shop.id]);
+  loaded.orders = ordersResult.rows.map(o => ({
+    id: o.id, customer: o.cliente_nome, phone: o.cliente_telefone || '', address: o.endereco || '',
+    payment: o.pagamento, fulfillment: o.tipo_entrega, status: o.status, total: Number(o.total || 0),
+    deliveryFee: Number(o.taxa_entrega || 0), discount: Number(o.desconto || 0), couponCode: o.codigo_cupom || '',
+    readyAt: o.previsao_entrega ? new Date(o.previsao_entrega).getTime() : Date.now(),
+    createdAt: new Date(o.created_at).getTime(), updatedAt: new Date(o.updated_at).getTime(),
+    notes: o.observacoes || '', items: o.items.map(i => ({id:i.id,name:i.name,description:i.description||'',quantity:Number(i.quantity),price:Number(i.price),notes:i.notes||'',selections:i.selections||[]}))
+  }));
   loaded.merchant.status_assinatura = subscription.status_assinatura;
   loaded.merchant.fim_assinatura = subscription.fim_assinatura;
   loaded.subscription = subscription;
@@ -503,6 +518,73 @@ http.createServer((request, response) => {
     return;
   }
 
+  if (pathname === "/api/public-order" && request.method === "POST") {
+    (async () => {
+      if (!subscriptionPool) return respondJson(response,503,{error:"Banco de dados indisponivel"});
+      const body=await readRequestJson(request);
+      const publicId=String(body.loja||"").trim();
+      const customer=String(body.cliente?.nome||"").trim().slice(0,120);
+      const phone=String(body.cliente?.telefone||"").trim().slice(0,40);
+      const address=String(body.endereco||"").trim().slice(0,1000);
+      const fulfillment=String(body.tipo_entrega||"");
+      const payment=String(body.pagamento||"").trim().slice(0,80);
+      const items=Array.isArray(body.itens)?body.itens:[];
+      if(!publicId||!customer||!phone||!payment||!items.length||items.length>50)return respondJson(response,400,{error:"Confira os dados do cliente e os itens do pedido"});
+      if(!["delivery","pickup"].includes(fulfillment))return respondJson(response,400,{error:"Forma de recebimento invalida"});
+      if(fulfillment==="delivery"&&!address)return respondJson(response,400,{error:"Informe o endereco de entrega"});
+      const shopRes=await subscriptionPool.query(`SELECT l.*,c.status_assinatura,c.fim_assinatura FROM public.lojas l JOIN public.comerciantes c ON c.id=l.merchant_id WHERE l.public_id=$1 LIMIT 1`,[publicId]);
+      if(!shopRes.rowCount)return respondJson(response,404,{error:"Loja nao encontrada"});
+      const shop=shopRes.rows[0], expires=shop.fim_assinatura?new Date(shop.fim_assinatura).getTime():null;
+      if(shop.status_assinatura!=="ativa"||(expires!==null&&expires<Date.now()))return respondJson(response,403,{error:"Esta loja nao esta recebendo pedidos no momento"});
+      if(shop.esta_aberta===false)return respondJson(response,409,{error:"A loja esta fechada"});
+      if((fulfillment==="delivery"&&!shop.aceita_entrega)||(fulfillment==="pickup"&&!shop.aceita_retirada))return respondJson(response,409,{error:"Esta modalidade nao esta disponivel"});
+      const client=await subscriptionPool.connect();let orderId,trackingToken;
+      try{
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))",[`${shop.id}:${phone}`]);
+        let cr=await client.query("SELECT id FROM public.clientes WHERE telefone=$1 ORDER BY created_at LIMIT 1 FOR UPDATE",[phone]);
+        let customerId;
+        if(cr.rowCount){customerId=cr.rows[0].id;await client.query("UPDATE public.clientes SET nome=$2,endereco=$3,updated_at=NOW() WHERE id=$1",[customerId,customer,address||null]);}
+        else {const c=await client.query("INSERT INTO public.clientes(nome,telefone,endereco) VALUES($1,$2,$3) RETURNING id",[customer,phone,address||null]);customerId=c.rows[0].id;}
+        let subtotal=0;const verified=[];
+        for(const item of items){
+          const productId=String(item.produto_id||"");const qty=Number(item.quantidade);
+          if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(productId)||!Number.isInteger(qty)||qty<1||qty>50)throw Object.assign(new Error("Produto ou quantidade invalida"),{statusCode:400});
+          const pr=await client.query("SELECT id,nome,descricao,preco,disponivel,opcoes FROM public.produtos WHERE id=$1 AND loja_id=$2",[productId,shop.id]);
+          if(!pr.rowCount||!pr.rows[0].disponivel)throw Object.assign(new Error("Um produto nao esta mais disponivel"),{statusCode:409});
+          const product=pr.rows[0], selections=Array.isArray(item.personalizacoes)?item.personalizacoes:[];let unit=Number(product.preco);const accepted=[];
+          const groups=Array.isArray(product.opcoes)?product.opcoes:[];
+          for(const sel of selections){const group=groups.find(g=>String(g.title||g.key)===String(sel.group));const choice=group?.choices?.find(c=>String(c.name)===String(sel.name));if(!choice)throw Object.assign(new Error("Uma personalizacao selecionada nao e valida"),{statusCode:400});const price=Number(choice.price||0);unit+=price;accepted.push({group:String(group.title||group.key),name:String(choice.name),price});}
+          for(const group of groups){const selected=accepted.filter(x=>x.group===String(group.title||group.key)).length;const min=Number(group.min||0),max=Number(group.max||1);if(selected<min||selected>max)throw Object.assign(new Error(`Revise as opcoes de ${product.nome}`),{statusCode:400});}
+          const lineTotal=unit*qty;subtotal+=lineTotal;verified.push({product,qty,unit,lineTotal,notes:String(item.observacao||"").trim().slice(0,500),selections:accepted});
+        }
+        const fee=0,discount=0,total=subtotal+fee-discount;
+        const status="Aguardando",eta=new Date(Date.now()+Math.max(10,Number(fulfillment==="delivery"?shop.tempo_entrega:shop.tempo_retirada)||30)*60000);
+        trackingToken=crypto.randomBytes(32).toString("base64url");const tokenHash=crypto.createHash("sha256").update(trackingToken).digest("hex");
+        const inserted=await client.query(`INSERT INTO public.pedidos(loja_id,cliente_id,tipo_entrega,endereco,pagamento,observacoes,total,status,previsao_entrega,public_token_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,created_at`,[shop.id,customerId,fulfillment,address||null,payment,String(body.observacoes||"").slice(0,1000),total,status,eta,tokenHash]);orderId=inserted.rows[0].id;
+        for(const item of verified){await client.query(`INSERT INTO public.itens_do_pedido(pedido_id,produto_id,produto_nome,produto_descricao,quantidade,preco_unitario,observacao,personalizacoes,preco_total) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`,[orderId,item.product.id,item.product.nome,item.product.descricao||"",item.qty,item.unit,item.notes||null,JSON.stringify(item.selections),item.lineTotal]);}
+        await client.query("COMMIT");return respondJson(response,201,{pedido:{id:orderId,status,total,created_at:inserted.rows[0].created_at,previsao_entrega:eta},tracking_token:trackingToken});
+      }catch(e){await client.query("ROLLBACK");return respondJson(response,e.statusCode||400,{error:e.message||"Nao foi possivel registrar o pedido"});}finally{client.release();}
+    })().catch(e=>{console.error("Falha ao criar pedido publico:",e.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel registrar o pedido"});});return;
+  }
+  if (pathname === "/api/order-track" && request.method === "GET") {
+    (async()=>{if(!subscriptionPool)return respondJson(response,503,{error:"Banco indisponivel"});const token=String(url.searchParams.get("token")||"");if(token.length<30)return respondJson(response,401,{error:"Codigo de acompanhamento invalido"});const hash=crypto.createHash("sha256").update(token).digest("hex");const r=await subscriptionPool.query(`SELECT p.id,p.status,p.tipo_entrega,p.previsao_entrega,p.created_at,p.updated_at,l.nome AS loja_nome,e.ultima_latitude,e.ultima_longitude,e.localizacao_atualizada_em FROM public.pedidos p JOIN public.lojas l ON l.id=p.loja_id LEFT JOIN public.entregadores e ON e.id=p.entregador_id WHERE p.public_token_hash=$1 LIMIT 1`,[hash]);if(!r.rowCount)return respondJson(response,404,{error:"Pedido nao encontrado"});const o=r.rows[0];return respondJson(response,200,{pedido:{id:o.id,status:o.status,tipo_entrega:o.tipo_entrega,previsao_entrega:o.previsao_entrega,created_at:o.created_at,updated_at:o.updated_at,loja_nome:o.loja_nome,localizacao:o.ultima_latitude!==null&&o.ultima_longitude!==null?{latitude:Number(o.ultima_latitude),longitude:Number(o.ultima_longitude),at:o.localizacao_atualizada_em}:null}});})().catch(e=>{console.error("Falha rastreio pedido:",e.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel consultar o pedido"});});return;
+  }
+
+  if (pathname === "/api/merchant/orders" && ["GET","PATCH"].includes(request.method)) {
+    (async()=>{
+      if(!subscriptionPool)return respondJson(response,503,{error:"Banco de dados indisponivel"});
+      const user=await authenticatedUser(request);if(!user)return respondJson(response,401,{error:"Sessao invalida"});
+      const mr=await subscriptionPool.query("SELECT status_assinatura,fim_assinatura FROM public.comerciantes WHERE id=$1",[user.id]);if(!mr.rowCount)return respondJson(response,403,{error:"Perfil de comerciante nao encontrado"});
+      const sub=mr.rows[0];if(sub.status_assinatura!=="ativa"||(sub.fim_assinatura&&new Date(sub.fim_assinatura).getTime()<Date.now()))return respondJson(response,403,{error:"Assinatura inativa"});
+      const lr=await subscriptionPool.query("SELECT id FROM public.lojas WHERE merchant_id=$1 ORDER BY created_at LIMIT 1",[user.id]);if(!lr.rowCount)return respondJson(response,404,{error:"Loja nao encontrada"});const shopId=lr.rows[0].id;
+      if(request.method==="GET"){const r=await subscriptionPool.query("SELECT id,status,endereco,tipo_entrega,created_at FROM public.pedidos WHERE loja_id=$1 ORDER BY created_at DESC LIMIT 300",[shopId]);return respondJson(response,200,{pedidos:r.rows});}
+      const b=await readRequestJson(request),orderId=String(b.pedido_id||""),status=String(b.status||"");const allowed=["Aguardando","Em preparo","Pronto","Saiu para entrega","Em rota","Entregue","Cancelado","Cancelada","Problema na entrega"];
+      if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(orderId)||!allowed.includes(status))return respondJson(response,400,{error:"Pedido ou status invalido"});
+      const r=await subscriptionPool.query("UPDATE public.pedidos SET status=$3,updated_at=NOW(),confirmado_em=CASE WHEN $3='Entregue' THEN NOW() ELSE confirmado_em END WHERE id=$1 AND loja_id=$2 RETURNING id,status,updated_at",[orderId,shopId,status]);if(!r.rowCount)return respondJson(response,404,{error:"Pedido nao encontrado"});return respondJson(response,200,{pedido:r.rows[0]});
+    })().catch(e=>{console.error("Falha pedidos comerciante:",e.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel atualizar o pedido"});});return;
+  }
+
   if (pathname.startsWith("/api/merchant/couriers")) {
     (async () => {
       if (!subscriptionPool) return respondJson(response, 503, { error: "Banco de dados indisponivel" });
@@ -579,6 +661,7 @@ http.createServer((request, response) => {
     })().catch(error=>{console.error("Falha portal entregador:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel carregar as entregas"});});return;
   }
   if (pathname === "/motoboy" || pathname === "/motoboy/") { pathname="/motoboy.html"; }
+  if (pathname === "/acompanhar" || pathname === "/acompanhar/") { pathname="/acompanhar.html"; }
   if (pathname === "/api/merchant-state") {
     (async () => {
       if (!subscriptionPool) return respondJson(response, 503, { error: "Banco de dados indisponivel" });

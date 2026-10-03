@@ -2,6 +2,8 @@
 -- Incremental: não remove nem recria dados existentes.
 BEGIN;
 ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS entregador_id uuid;
+ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS public_token_hash text;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedidos_public_token_hash ON public.pedidos(public_token_hash) WHERE public_token_hash IS NOT NULL;
 CREATE TABLE IF NOT EXISTS public.entregadores (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   loja_id uuid NOT NULL REFERENCES public.lojas(id) ON DELETE CASCADE,
