@@ -42,3 +42,7 @@ O arquivo `render.yaml` ja guarda essa configuracao para o deploy automatico pel
 
 ### Acompanhamento público do pedido
 Após o checkout pela vitrine pública, o cliente recebe um link individual de acompanhamento. A página `/acompanhar?token=...` consulta o status periodicamente e exibe a última localização GPS compartilhada pelo entregador em um mapa OpenStreetMap, além de permitir abrir o ponto no Google Maps. O rastreamento depende de HTTPS, permissão de geolocalização no dispositivo do entregador e publicação do servidor atualizado.
+
+
+### Mapas e rotas (OpenStreetMap + openrouteservice)
+Defina `ORS_API_KEY` nas variáveis de ambiente do servidor. O mapa usa Leaflet/OpenStreetMap e o servidor consulta o ORS para geocodificar destinos e calcular a rota do entregador. Consulte `ENTREGADORES-LEIA-ME.md` para limites e configuração.
