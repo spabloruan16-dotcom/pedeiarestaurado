@@ -581,7 +581,7 @@ http.createServer((request, response) => {
       if(request.method==="GET"){const r=await subscriptionPool.query("SELECT id,status,endereco,tipo_entrega,created_at FROM public.pedidos WHERE loja_id=$1 ORDER BY created_at DESC LIMIT 300",[shopId]);return respondJson(response,200,{pedidos:r.rows});}
       const b=await readRequestJson(request),orderId=String(b.pedido_id||""),status=String(b.status||"");const allowed=["Aguardando","Em preparo","Pronto","Saiu para entrega","Em rota","Entregue","Cancelado","Cancelada","Problema na entrega"];
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(orderId)||!allowed.includes(status))return respondJson(response,400,{error:"Pedido ou status invalido"});
-      const r=await subscriptionPool.query("UPDATE public.pedidos SET status=$3,updated_at=NOW(),confirmado_em=CASE WHEN $3='Entregue' THEN NOW() ELSE confirmado_em END WHERE id=$1 AND loja_id=$2 RETURNING id,status,updated_at",[orderId,shopId,status]);if(!r.rowCount)return respondJson(response,404,{error:"Pedido nao encontrado"});return respondJson(response,200,{pedido:r.rows[0]});
+      const r=await subscriptionPool.query("UPDATE public.pedidos SET status=$3,updated_at=NOW(),confirmado_em=CASE WHEN $4::text='Entregue' THEN NOW() ELSE confirmado_em END WHERE id=$1 AND loja_id=$2 RETURNING id,status,updated_at",[orderId,shopId,status,status]);if(!r.rowCount)return respondJson(response,404,{error:"Pedido nao encontrado"});return respondJson(response,200,{pedido:r.rows[0]});
     })().catch(e=>{console.error("Falha pedidos comerciante:",e.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel atualizar o pedido"});});return;
   }
 
