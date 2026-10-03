@@ -1,6 +1,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 require("dotenv").config();
 const { Pool } = require("pg");
 
@@ -426,7 +427,7 @@ async function routeSupport(request, response, pathname) {
 
 http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
-  const pathname = url.pathname;
+  let pathname = url.pathname;
 
   if (pathname === "/api/admin/support" || /^\/api\/admin\/support\/[0-9a-f-]{36}(?:\/messages)?$/i.test(pathname) || pathname === "/api/support" || /^\/api\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname)) {
     routeSupport(request,response,pathname).catch(error=>{console.error("Falha no atendimento:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel concluir o atendimento"});}); return;
@@ -502,6 +503,82 @@ http.createServer((request, response) => {
     return;
   }
 
+  if (pathname.startsWith("/api/merchant/couriers")) {
+    (async () => {
+      if (!subscriptionPool) return respondJson(response, 503, { error: "Banco de dados indisponivel" });
+      const user = await authenticatedUser(request);
+      if (!user) return respondJson(response, 401, { error: "Sessao invalida" });
+      const merchant = await subscriptionPool.query("SELECT id,status_assinatura,fim_assinatura FROM public.comerciantes WHERE id=$1", [user.id]);
+      if (!merchant.rowCount) return respondJson(response, 403, { error: "Perfil de comerciante nao encontrado" });
+      const sub = merchant.rows[0];
+      if (sub.status_assinatura !== "ativa" || (sub.fim_assinatura && new Date(sub.fim_assinatura).getTime() < Date.now())) return respondJson(response, 403, { error: "Assinatura inativa" });
+      const shopRes = await subscriptionPool.query("SELECT id FROM public.lojas WHERE merchant_id=$1 ORDER BY created_at LIMIT 1", [user.id]);
+      if (!shopRes.rowCount) return respondJson(response, 404, { error: "Cadastre sua loja primeiro" });
+      const shopId = shopRes.rows[0].id;
+      const routeMatch = pathname.match(/^\/api\/merchant\/couriers\/([0-9a-f-]{36})$/i);
+      if (pathname === "/api/merchant/couriers" && request.method === "GET") {
+        const rows = await subscriptionPool.query(`SELECT e.id,e.nome,e.telefone,e.veiculo,e.ativo,e.created_at,
+          (SELECT count(*)::int FROM public.pedidos p WHERE p.entregador_id=e.id AND p.status NOT IN ('Entregue','Cancelado','Cancelada')) AS pedidos_ativos
+          FROM public.entregadores e WHERE e.loja_id=$1 ORDER BY e.created_at DESC`, [shopId]);
+        return respondJson(response, 200, { entregadores: rows.rows });
+      }
+      if (pathname === "/api/merchant/couriers" && request.method === "POST") {
+        const body = await readRequestJson(request);
+        const nome = String(body.nome || "").trim().slice(0,120), telefone=String(body.telefone||"").trim().slice(0,40), veiculo=String(body.veiculo||"").trim().slice(0,80);
+        if (!nome) return respondJson(response,400,{error:"Informe o nome do entregador"});
+        const token=crypto.randomBytes(32).toString("base64url"), tokenHash=crypto.createHash("sha256").update(token).digest("hex");
+        const inserted=await subscriptionPool.query(`INSERT INTO public.entregadores(loja_id,nome,telefone,veiculo,token_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,nome,telefone,veiculo,ativo,created_at`,[shopId,nome,telefone,veiculo,tokenHash]);
+        return respondJson(response,201,{entregador:inserted.rows[0],token});
+      }
+      if (routeMatch && request.method === "PATCH") {
+        const body=await readRequestJson(request), ativo=body.ativo===true;
+        const updated=await subscriptionPool.query("UPDATE public.entregadores SET ativo=$3,updated_at=NOW() WHERE id=$1 AND loja_id=$2 RETURNING id,nome,telefone,veiculo,ativo",[routeMatch[1],shopId,ativo]);
+        return updated.rowCount?respondJson(response,200,{entregador:updated.rows[0]}):respondJson(response,404,{error:"Entregador nao encontrado"});
+      }
+      if (routeMatch && request.method === "DELETE") {
+        await subscriptionPool.query("UPDATE public.pedidos SET entregador_id=NULL WHERE entregador_id=$1 AND loja_id=$2",[routeMatch[1],shopId]);
+        const deleted=await subscriptionPool.query("DELETE FROM public.entregadores WHERE id=$1 AND loja_id=$2 RETURNING id",[routeMatch[1],shopId]);
+        return deleted.rowCount?respondJson(response,200,{ok:true}):respondJson(response,404,{error:"Entregador nao encontrado"});
+      }
+      const assign=pathname.match(/^\/api\/merchant\/couriers\/([0-9a-f-]{36})\/assign$/i);
+      if(assign && request.method==="POST"){
+        const body=await readRequestJson(request), orderId=String(body.pedido_id||"");
+        if(!/^[0-9a-f-]{36}$/i.test(orderId))return respondJson(response,400,{error:"ID de pedido invalido"});
+        const c=await subscriptionPool.query("SELECT id FROM public.entregadores WHERE id=$1 AND loja_id=$2 AND ativo=true",[assign[1],shopId]);
+        if(!c.rowCount)return respondJson(response,404,{error:"Entregador ativo nao encontrado"});
+        const order=await subscriptionPool.query("UPDATE public.pedidos SET entregador_id=$1,updated_at=NOW() WHERE id=$2 AND loja_id=$3 AND status NOT IN ('Entregue','Cancelado','Cancelada') RETURNING id,status,endereco",[assign[1],orderId,shopId]);
+        return order.rowCount?respondJson(response,200,{pedido:order.rows[0]}):respondJson(response,404,{error:"Pedido nao encontrado ou encerrado"});
+      }
+      response.setHeader("Allow","GET, POST, PATCH, DELETE");return respondJson(response,405,{error:"Metodo nao permitido"});
+    })().catch(error=>{console.error("Falha central entregadores:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel concluir a operacao de entregadores"});});
+    return;
+  }
+  if (pathname === "/api/courier" && ["GET","PATCH"].includes(request.method)) {
+    (async()=>{
+      if(!subscriptionPool)return respondJson(response,503,{error:"Banco indisponivel"});
+      const token=String(url.searchParams.get("token")||"");
+      if(token.length<30)return respondJson(response,401,{error:"Link invalido ou expirado"});
+      const hash=crypto.createHash("sha256").update(token).digest("hex");
+      const found=await subscriptionPool.query(`SELECT e.id,e.nome,e.loja_id,e.ativo,l.nome AS loja_nome FROM public.entregadores e JOIN public.lojas l ON l.id=e.loja_id WHERE e.token_hash=$1 LIMIT 1`,[hash]);
+      const courier=found.rows[0];if(!courier||!courier.ativo)return respondJson(response,403,{error:"Acesso do entregador desativado"});
+      if(request.method==="GET"){
+        const orders=await subscriptionPool.query(`SELECT p.id,p.status,p.endereco,p.tipo_entrega,p.previsao_entrega,p.created_at,
+          c.nome AS cliente_nome,c.telefone AS cliente_telefone,
+          COALESCE(json_agg(json_build_object('nome',i.produto_nome,'quantidade',i.quantidade,'observacao',i.observacao)) FILTER(WHERE i.id IS NOT NULL),'[]') AS itens
+          FROM public.pedidos p JOIN public.clientes c ON c.id=p.cliente_id LEFT JOIN public.itens_do_pedido i ON i.pedido_id=p.id
+          WHERE p.entregador_id=$1 AND p.status NOT IN ('Entregue','Cancelado','Cancelada') GROUP BY p.id,c.nome,c.telefone ORDER BY p.created_at`,[courier.id]);
+        return respondJson(response,200,{entregador:{nome:courier.nome,loja:courier.loja_nome},pedidos:orders.rows});
+      }
+      const body=await readRequestJson(request), allowed=["Saiu para entrega","Em rota","Entregue","Problema na entrega"];
+      if(body.status&&!allowed.includes(body.status))return respondJson(response,400,{error:"Status nao permitido"});
+      const client=await subscriptionPool.connect();try{await client.query("BEGIN");
+        if(body.latitude!==undefined&&body.longitude!==undefined){const lat=Number(body.latitude),lon=Number(body.longitude);if(!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)throw new Error("Coordenadas invalidas");await client.query("UPDATE public.entregadores SET ultima_latitude=$2,ultima_longitude=$3,localizacao_atualizada_em=NOW(),updated_at=NOW() WHERE id=$1",[courier.id,lat,lon]);}
+        if(body.pedido_id&&body.status){const result=await client.query("UPDATE public.pedidos SET status=$3,updated_at=NOW() WHERE id=$1 AND entregador_id=$2 AND status NOT IN ('Entregue','Cancelado','Cancelada') RETURNING id",[body.pedido_id,courier.id,body.status]);if(!result.rowCount)throw new Error("Pedido nao atribuido ou ja encerrado");}
+        await client.query("COMMIT");return respondJson(response,200,{ok:true});
+      }catch(e){await client.query("ROLLBACK");return respondJson(response,400,{error:e.message});}finally{client.release();}
+    })().catch(error=>{console.error("Falha portal entregador:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel carregar as entregas"});});return;
+  }
+  if (pathname === "/motoboy" || pathname === "/motoboy/") { pathname="/motoboy.html"; }
   if (pathname === "/api/merchant-state") {
     (async () => {
       if (!subscriptionPool) return respondJson(response, 503, { error: "Banco de dados indisponivel" });

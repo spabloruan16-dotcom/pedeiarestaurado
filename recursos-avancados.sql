@@ -97,4 +97,25 @@ CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_data ON public.pedidos(cliente_id
 CREATE INDEX IF NOT EXISTS idx_banners_loja_ativo_ordem ON public.banners_promocionais(loja_id,ativo,ordem);
 CREATE INDEX IF NOT EXISTS idx_pontos_cliente_loja ON public.pontos_clientes(loja_id,cliente_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ingredientes_loja ON public.ingredientes(loja_id,ativo);
+
+-- Central de entregadores e acesso individual por link seguro.
+ALTER TABLE public.pedidos ADD COLUMN IF NOT EXISTS entregador_id uuid;
+CREATE TABLE IF NOT EXISTS public.entregadores (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ loja_id uuid NOT NULL REFERENCES public.lojas(id) ON DELETE CASCADE,
+ nome varchar(120) NOT NULL, telefone varchar(40), veiculo varchar(80),
+ token_hash text NOT NULL UNIQUE, ativo boolean NOT NULL DEFAULT true,
+ ultima_latitude numeric(10,7), ultima_longitude numeric(10,7),
+ localizacao_atualizada_em timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='pedidos_entregador_id_fkey') THEN
+  ALTER TABLE public.pedidos ADD CONSTRAINT pedidos_entregador_id_fkey FOREIGN KEY(entregador_id) REFERENCES public.entregadores(id) ON DELETE SET NULL;
+ END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_entregadores_loja_ativo ON public.entregadores(loja_id,ativo);
+CREATE INDEX IF NOT EXISTS idx_pedidos_entregador_status ON public.pedidos(entregador_id,status,created_at);
+
+
 COMMIT;
