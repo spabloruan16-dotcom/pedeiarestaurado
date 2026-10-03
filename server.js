@@ -366,6 +366,7 @@ async function routeSupport(request, response, pathname) {
   if (auth.error) return respondJson(response, auth.status, {error: auth.error});
   const user = auth.user;
   const idMatch = pathname.match(/\/([0-9a-f-]{36})\/messages$/i);
+  const ticketMatch = adminPath ? pathname.match(/^\/api\/admin\/support\/([0-9a-f-]{36})$/i) : null;
   if (adminPath) {
     if (pathname === '/api/admin/support' && request.method === 'GET') {
       const r = await subscriptionPool.query(`SELECT a.id, a.comerciante_id, a.loja_id, a.tipo, a.assunto, a.status, a.created_at, a.updated_at, c.nome AS comerciante_nome, c.email, l.nome AS loja_nome, (SELECT m.conteudo FROM public.mensagens_atendimento m WHERE m.atendimento_id=a.id ORDER BY m.created_at DESC LIMIT 1) AS ultima_mensagem FROM public.atendimentos a JOIN public.comerciantes c ON c.id=a.comerciante_id LEFT JOIN public.lojas l ON l.id=a.loja_id ORDER BY a.updated_at DESC LIMIT 200`);
@@ -379,6 +380,20 @@ async function routeSupport(request, response, pathname) {
       const c=await subscriptionPool.query(`INSERT INTO public.atendimentos(comerciante_id,loja_id,tipo,assunto,status) VALUES($1,$2,$3,$4,'aguardando_comerciante') RETURNING *`,[merchantId,lr.rows[0]?.id||null,tipo,assunto]);
       await subscriptionPool.query(`INSERT INTO public.mensagens_atendimento(atendimento_id,remetente_id,remetente_tipo,conteudo) VALUES($1,$2,'admin',$3)`,[c.rows[0].id,user.id,conteudo]);
       return respondJson(response,201,{atendimento:c.rows[0]});
+    }
+    if (ticketMatch && request.method === 'PATCH') {
+      const b = await readRequestJson(request);
+      const status = String(b.status || '');
+      const allowedStatuses = ['novo', 'em_andamento', 'resolvido'];
+      if (!allowedStatuses.includes(status)) return respondJson(response, 400, {error:'Status de chamado invalido'});
+      const updated = await subscriptionPool.query('UPDATE public.atendimentos SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING id,status,updated_at', [status, ticketMatch[1]]);
+      if (!updated.rowCount) return respondJson(response, 404, {error:'Atendimento nao encontrado'});
+      return respondJson(response, 200, {atendimento:updated.rows[0]});
+    }
+    if (ticketMatch && request.method === 'DELETE') {
+      const deleted = await subscriptionPool.query('DELETE FROM public.atendimentos WHERE id=$1 RETURNING id', [ticketMatch[1]]);
+      if (!deleted.rowCount) return respondJson(response, 404, {error:'Atendimento nao encontrado'});
+      return respondJson(response, 200, {ok:true});
     }
     if (idMatch && request.method === 'GET') {
       const own=await subscriptionPool.query('SELECT id FROM public.atendimentos WHERE id=$1',[idMatch[1]]); if(!own.rowCount)return respondJson(response,404,{error:'Atendimento nao encontrado'});
@@ -405,14 +420,14 @@ async function routeSupport(request, response, pathname) {
       if(request.method==='POST'){const b=await readRequestJson(request);const conteudo=String(b.conteudo||'').trim().slice(0,10000);const anexo=String(b.anexo_url||'').slice(0,1000);if(!conteudo&&!anexo)return respondJson(response,400,{error:'Escreva uma mensagem ou anexe um arquivo'});const m=await subscriptionPool.query(`INSERT INTO public.mensagens_atendimento(atendimento_id,remetente_id,remetente_tipo,conteudo,anexo_url,anexo_nome,anexo_tipo) VALUES($1,$2,'comerciante',$3,$4,$5,$6) RETURNING *`,[idMatch[1],user.id,conteudo,anexo||null,String(b.anexo_nome||'').slice(0,255)||null,String(b.anexo_tipo||'').slice(0,120)||null]);await subscriptionPool.query(`UPDATE public.atendimentos SET status='aguardando_admin',updated_at=NOW() WHERE id=$1`,[idMatch[1]]);return respondJson(response,201,{mensagem:m.rows[0]});}
     }
   }
-  response.setHeader('Allow','GET, POST');return respondJson(response,405,{error:'Metodo nao permitido'});
+  response.setHeader('Allow','GET, POST, PATCH, DELETE');return respondJson(response,405,{error:'Metodo nao permitido'});
 }
 
 http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const pathname = url.pathname;
 
-  if (pathname === "/api/admin/support" || /^\/api\/admin\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname) || pathname === "/api/support" || /^\/api\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname)) {
+  if (pathname === "/api/admin/support" || /^\/api\/admin\/support\/[0-9a-f-]{36}(?:\/messages)?$/i.test(pathname) || pathname === "/api/support" || /^\/api\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname)) {
     routeSupport(request,response,pathname).catch(error=>{console.error("Falha no atendimento:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel concluir o atendimento"});}); return;
   }
   if (pathname === "/api/health") {

@@ -12,3 +12,9 @@ PEDEIA - PAINEL ADMINISTRATIVO
 6. Ativacao no painel libera por 30 dias; Suspender e Pendente bloqueiam acesso. Confirme as rotas e politicas de assinatura antes de producao.
 
 IMPORTANTE: Nunca exponha DATABASE_URL, senha do banco ou service_role key em app.js, HTML, repositorio publico ou navegador.
+
+7. ANEXOS DA CENTRAL DE ATENDIMENTO
+   Execute o arquivo atendimento-storage.sql no Supabase > SQL Editor.
+   Ele cria/configura o bucket privado atendimento-arquivos (15 MB) e políticas
+   para comerciante acessar a própria pasta e administrador enviar/visualizar
+   anexos. Não torne o bucket público e não exponha service_role key.

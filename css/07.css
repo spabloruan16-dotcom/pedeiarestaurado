@@ -1074,3 +1074,4 @@ select:focus {
 .support-file { display:block; color:var(--muted); font-size:12px; }
 .support-file input { display:block; margin-top:5px; max-width:100%; }
 @media(max-width:760px){.support-layout{grid-template-columns:1fr}.support-conversation{min-height:260px}.support-message{max-width:96%}}
+.support-ticket-wrap{border:1px solid var(--line,#dce5df);border-radius:12px;padding:8px;margin-bottom:9px;background:#fff}.support-ticket-wrap .support-ticket{width:100%;text-align:left;border:0;background:transparent}.support-ticket-controls{display:flex;align-items:end;justify-content:space-between;gap:8px;padding:4px 8px 2px}.support-ticket-controls label{display:flex;align-items:center;gap:8px;font-size:12px;color:#68756f}.support-ticket-controls select{max-width:160px;border:1px solid #dce5df;border-radius:8px;padding:7px;background:white;color:#202923}.support-ticket-controls .secondary-button{padding:7px 12px;font-size:12px}
