@@ -645,17 +645,29 @@ http.createServer((request, response) => {
       const courier=found.rows[0];if(!courier||!courier.ativo)return respondJson(response,403,{error:"Acesso do entregador desativado"});
       if(request.method==="GET"){
         const orders=await subscriptionPool.query(`SELECT p.id,p.status,p.endereco,p.tipo_entrega,p.previsao_entrega,p.created_at,
+          CASE WHEN p.entregador_id=$1 THEN 'assigned' ELSE 'available' END AS courier_assignment,
           c.nome AS cliente_nome,c.telefone AS cliente_telefone,
           COALESCE(json_agg(json_build_object('nome',i.produto_nome,'quantidade',i.quantidade,'observacao',i.observacao)) FILTER(WHERE i.id IS NOT NULL),'[]') AS itens
           FROM public.pedidos p JOIN public.clientes c ON c.id=p.cliente_id LEFT JOIN public.itens_do_pedido i ON i.pedido_id=p.id
-          WHERE p.entregador_id=$1 AND p.status NOT IN ('Entregue','Cancelado','Cancelada') GROUP BY p.id,c.nome,c.telefone ORDER BY p.created_at`,[courier.id]);
+          WHERE p.tipo_entrega='delivery' AND p.status IN ('Pronto','Saiu para entrega')
+            AND (p.entregador_id=$1 OR p.entregador_id IS NULL)
+          GROUP BY p.id,c.nome,c.telefone ORDER BY CASE WHEN p.entregador_id=$1 THEN 0 ELSE 1 END,p.created_at`,[courier.id]);
         return respondJson(response,200,{entregador:{nome:courier.nome,loja:courier.loja_nome},pedidos:orders.rows});
       }
       const body=await readRequestJson(request), allowed=["Saiu para entrega","Em rota","Entregue","Problema na entrega"];
+      if(body.acao==="aceitar"){
+        const orderId=String(body.pedido_id||'');
+        if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(orderId))return respondJson(response,400,{error:"ID de pedido invalido"});
+        const accepted=await subscriptionPool.query(`UPDATE public.pedidos SET entregador_id=$1,updated_at=NOW()
+          WHERE id=$2 AND loja_id=$3 AND tipo_entrega='delivery' AND entregador_id IS NULL
+          AND status IN ('Pronto','Saiu para entrega') RETURNING id,status`,[courier.id,orderId,courier.loja_id]);
+        if(!accepted.rowCount)return respondJson(response,409,{error:"Este pedido não está mais disponível para aceite. Atualize a lista."});
+        return respondJson(response,200,{ok:true,pedido:accepted.rows[0]});
+      }
       if(body.status&&!allowed.includes(body.status))return respondJson(response,400,{error:"Status nao permitido"});
       const client=await subscriptionPool.connect();try{await client.query("BEGIN");
         if(body.latitude!==undefined&&body.longitude!==undefined){const lat=Number(body.latitude),lon=Number(body.longitude);if(!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)throw new Error("Coordenadas invalidas");await client.query("UPDATE public.entregadores SET ultima_latitude=$2,ultima_longitude=$3,localizacao_atualizada_em=NOW(),updated_at=NOW() WHERE id=$1",[courier.id,lat,lon]);}
-        if(body.pedido_id&&body.status){const result=await client.query("UPDATE public.pedidos SET status=$3,updated_at=NOW() WHERE id=$1 AND entregador_id=$2 AND status NOT IN ('Entregue','Cancelado','Cancelada') RETURNING id",[body.pedido_id,courier.id,body.status]);if(!result.rowCount)throw new Error("Pedido nao atribuido ou ja encerrado");}
+        if(body.pedido_id&&body.status){const result=await client.query("UPDATE public.pedidos SET status=$3::text,updated_at=NOW() WHERE id=$1 AND entregador_id=$2 AND status NOT IN ('Entregue','Cancelado','Cancelada') RETURNING id",[body.pedido_id,courier.id,body.status]);if(!result.rowCount)throw new Error("Pedido nao atribuido ou ja encerrado");}
         await client.query("COMMIT");return respondJson(response,200,{ok:true});
       }catch(e){await client.query("ROLLBACK");return respondJson(response,400,{error:e.message});}finally{client.release();}
     })().catch(error=>{console.error("Falha portal entregador:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel carregar as entregas"});});return;
