@@ -538,7 +538,13 @@ http.createServer((request, response) => {
           }
         });
       }
-      return respondJson(response, 200, shopState);
+      return respondJson(response, 200, {
+        ...shopState,
+        subscription: {
+          status_assinatura: subscription?.status_assinatura || "pendente",
+          fim_assinatura: subscription?.fim_assinatura || null
+        }
+      });
     })().catch((error) => {
       console.error("Falha ao carregar vitrine publica:", error.message);
       if (!response.headersSent) respondJson(response, 503, { error: "Nao foi possivel carregar a loja" });

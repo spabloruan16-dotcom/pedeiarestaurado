@@ -219,7 +219,7 @@ async function loadMerchantState() {
 
 async function loadPublicShopFromDatabase() {
   try {
-    const response = await fetch(`/api/public-shop?loja=${encodeURIComponent(publicShop())}`, { cache: 'no-store' });
+    const response = await fetch(`/api/public-shop?loja=${encodeURIComponent(publicShop())}`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error('Nao foi possivel carregar esta loja.');
     const saved = await response.json();
     state = {
@@ -228,6 +228,10 @@ async function loadPublicShopFromDatabase() {
       shop: { ...state.shop, ...saved.shop },
       delivery: { ...state.delivery, ...(saved.delivery || {}) }
     };
+    verifiedSubscription = saved.subscription || null;
+    subscriptionCheckError = false;
+    subscriptionCheckLoading = false;
+    lastSubscriptionCheck = Date.now();
     return true;
   } catch {
     subscriptionCheckError = true;
@@ -522,7 +526,6 @@ async function bootstrap() {
       startLiveRefresh();
       return;
     }
-    await refreshShopSubscription();
     render();
     startLiveRefresh();
     return;
@@ -564,7 +567,7 @@ function startLiveRefresh() {
     if (document.activeElement?.matches('input, textarea, select')) return;
     if (publicShop() !== null) {
       if (Date.now() - lastSubscriptionCheck >= 30000) {
-        if (await loadPublicShopFromDatabase()) await refreshShopSubscription();
+        if (await loadPublicShopFromDatabase()) render();
       }
       return;
     }
@@ -588,7 +591,7 @@ async function refreshShopSubscription() {
   render();
 
   try {
-    const response = await fetch(`/api/shop-subscription?loja=${encodeURIComponent(publicId)}`, { cache: 'no-store' });
+    const response = await fetch(`/api/shop-subscription?loja=${encodeURIComponent(publicId)}`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error('subscription check failed');
     verifiedSubscription = await response.json();
     lastSubscriptionCheck = Date.now();
