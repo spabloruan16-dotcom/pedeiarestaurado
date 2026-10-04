@@ -1160,7 +1160,7 @@ function menuView() {
             <strong>${esc(product.name)}</strong>
             <small>${esc((product.categories || [product.category]).join(' · '))} · ${esc(product.description)}</small>
           </div>
-          <b>${product.options?.some(g=>g.key==='sizes') ? `A partir de ${money(product.price)}` : money(product.price)}</b>
+          <b>${(Array.isArray(product.options) && product.options.some(g=>g.key==='sizes')) ? `A partir de ${money(product.price)}` : money(product.price)}</b>
           <label class="switch">
             <input type="checkbox" data-product="${product.id}" ${product.available ? 'checked' : ''}>
             <span></span>
@@ -1596,9 +1596,9 @@ function customerProduct(product) {
         <h3>${product.featured ? '⭐ ' : ''}${esc(product.name)}</h3>
         ${product.label ? `<span class="product-label">${esc(product.label)}</span>` : ''}
         <p>${esc(product.description)}</p>
-        <strong>${product.options?.some(g=>g.key==='sizes') ? `A partir de ${money(product.price)}` : money(product.price)}</strong>
+        <strong>${(Array.isArray(product.options) && product.options.some(g=>g.key==='sizes')) ? `A partir de ${money(product.price)}` : money(product.price)}</strong>
       </div>
-      <button class="add-food" data-action="add-cart" data-id="${product.id}">${product.options?.length ? 'Personalizar' : 'Adicionar'}</button>
+      <button class="add-food" data-action="add-cart" data-id="${product.id}">${(Array.isArray(product.options) && product.options.length) ? 'Personalizar' : 'Adicionar'}</button>
     </article>
   `;
 }
@@ -2113,7 +2113,7 @@ function categoryDialog() {
 
 function productDialog(id) {
   const product = state.products.find((item) => String(item.id) === String(id));
-  const groups = product?.options || [];
+  const groups = Array.isArray(product?.options) ? product.options : [];
   const getGroup = (key) => groups.find((g) => g.key === key)?.choices || [];
   const choicesText = (key) => getGroup(key).map((c) => `${c.name}${Number(c.price) ? `|${Number(c.price)}` : ''}`).join('\n');
   const optionBlock = (key, title, hint, multi = false) => `

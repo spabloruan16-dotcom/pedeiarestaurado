@@ -169,7 +169,7 @@ async function loadShopState(shop, merchant, includePrivate) {
       photo: row.foto_url || "",
       price: Number(row.preco),
       available: row.disponivel,
-      options: row.opcoes || [],
+      options: Array.isArray(row.opcoes) ? row.opcoes : [],
       featured: row.destaque === true,
       label: row.etiqueta || ""
     })),
