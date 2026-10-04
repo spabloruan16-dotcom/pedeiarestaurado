@@ -559,7 +559,8 @@ http.createServer((request, response) => {
       const customer=String(body.cliente?.nome||"").trim().slice(0,120);
       const phone=String(body.cliente?.telefone||"").trim().slice(0,40);
       const address=String(body.endereco||"").trim().slice(0,1000);
-      const addressParts=body.endereco_partes&&typeof body.endereco_partes==="object"?JSON.stringify(body.endereco_partes):null;
+      const parts=body.endereco_partes&&typeof body.endereco_partes==="object"?body.endereco_partes:{};
+      const addressParts=Object.keys(parts).length?JSON.stringify(parts):null;
       const fulfillment=String(body.tipo_entrega||"");
       const payment=String(body.pagamento||"").trim().slice(0,80);
       const items=Array.isArray(body.itens)?body.itens:[];
@@ -572,6 +573,15 @@ http.createServer((request, response) => {
       if(shop.status_assinatura!=="ativa"||(expires!==null&&expires<Date.now()))return respondJson(response,403,{error:"Esta loja nao esta recebendo pedidos no momento"});
       if(shop.esta_aberta===false)return respondJson(response,409,{error:"A loja esta fechada"});
       if((fulfillment==="delivery"&&!shop.aceita_entrega)||(fulfillment==="pickup"&&!shop.aceita_retirada))return respondJson(response,409,{error:"Esta modalidade nao esta disponivel"});
+      const serviceNeighborhoods=Array.isArray((shop.personalizacao_vitrine||{}).serviceNeighborhoods)?shop.personalizacao_vitrine.serviceNeighborhoods:[];
+      let deliveryFee=0;
+      if(fulfillment==="delivery"){
+        const requestedNeighborhood=String(parts.neighborhood||body.bairro_entrega||"").trim();
+        const normalizeName=value=>String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toLocaleLowerCase("pt-BR");
+        const match=serviceNeighborhoods.find(item=>normalizeName(typeof item==="string"?item:(item.nome||item.name))===normalizeName(requestedNeighborhood));
+        if(!requestedNeighborhood||!match)return respondJson(response,400,{error:"Selecione um bairro cadastrado pela loja para calcular a taxa de entrega"});
+        deliveryFee=Math.max(0,Number(typeof match==="string"?0:(match.taxa??match.fee??0))||0);
+      }
       const client=await subscriptionPool.connect();let orderId,trackingToken;
       try{
         await client.query("BEGIN");
@@ -592,12 +602,12 @@ http.createServer((request, response) => {
           for(const group of groups){const selected=accepted.filter(x=>x.group===String(group.title||group.key)).length;const min=Number(group.min||0),max=Number(group.max||1);if(selected<min||selected>max)throw Object.assign(new Error(`Revise as opcoes de ${product.nome}`),{statusCode:400});}
           const lineTotal=unit*qty;subtotal+=lineTotal;verified.push({product,qty,unit,lineTotal,notes:String(item.observacao||"").trim().slice(0,500),selections:accepted});
         }
-        const fee=0,discount=0,total=subtotal+fee-discount;
+        const fee=deliveryFee,discount=0,total=subtotal+fee-discount;
         const status="Aguardando",eta=new Date(Date.now()+Math.max(10,Number(fulfillment==="delivery"?shop.tempo_entrega:shop.tempo_retirada)||30)*60000);
         trackingToken=crypto.randomBytes(32).toString("base64url");const tokenHash=crypto.createHash("sha256").update(trackingToken).digest("hex");
-        const inserted=await client.query(`INSERT INTO public.pedidos(loja_id,cliente_id,tipo_entrega,endereco,endereco_partes,pagamento,observacoes,total,status,previsao_entrega,public_token_hash) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11) RETURNING id,created_at`,[shop.id,customerId,fulfillment,address||null,addressParts,payment,String(body.observacoes||"").slice(0,1000),total,status,eta,tokenHash]);orderId=inserted.rows[0].id;
+        const inserted=await client.query(`INSERT INTO public.pedidos(loja_id,cliente_id,tipo_entrega,endereco,endereco_partes,pagamento,observacoes,total,taxa_entrega,status,previsao_entrega,public_token_hash) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12) RETURNING id,created_at`,[shop.id,customerId,fulfillment,address||null,addressParts,payment,String(body.observacoes||"").slice(0,1000),total,fee,status,eta,tokenHash]);orderId=inserted.rows[0].id;
         for(const item of verified){await client.query(`INSERT INTO public.itens_do_pedido(pedido_id,produto_id,produto_nome,produto_descricao,quantidade,preco_unitario,observacao,personalizacoes,preco_total) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`,[orderId,item.product.id,item.product.nome,item.product.descricao||"",item.qty,item.unit,item.notes||null,JSON.stringify(item.selections),item.lineTotal]);}
-        await client.query("COMMIT");return respondJson(response,201,{pedido:{id:orderId,status,total,created_at:inserted.rows[0].created_at,previsao_entrega:eta},tracking_token:trackingToken});
+        await client.query("COMMIT");return respondJson(response,201,{pedido:{id:orderId,status,total,taxa_entrega:fee,created_at:inserted.rows[0].created_at,previsao_entrega:eta},tracking_token:trackingToken});
       }catch(e){await client.query("ROLLBACK");return respondJson(response,e.statusCode||400,{error:e.message||"Nao foi possivel registrar o pedido"});}finally{client.release();}
     })().catch(e=>{console.error("Falha ao criar pedido publico:",e.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel registrar o pedido"});});return;
   }

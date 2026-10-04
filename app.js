@@ -262,6 +262,8 @@ function save() {
   return persist.catch((error) => notify(error.message || 'Falha ao salvar os dados.'));
 }
 
+function normalizeNeighborhoodName(value) { return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('pt-BR'); }
+
 function money(value) {
   return Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
@@ -1692,6 +1694,8 @@ function bindMerchant() {
     const values=rows.map(row=>({nome:row.querySelector('[data-service-name]')?.value.trim()||'',taxa:Number(row.querySelector('[data-service-fee]')?.value||0)})).filter(x=>x.nome);
     if(values.some(x=>!Number.isFinite(x.taxa)||x.taxa<0)){notify('Informe taxas válidas e não negativas.');return;}
     state.shop.serviceNeighborhoods=values;
+    state.shop.storefront=state.shop.storefront||{};
+    state.shop.storefront.serviceNeighborhoods=values;
     try{await save();render();document.querySelector('[data-disclosure=\"service-neighborhoods\"]')?.setAttribute('open','');notify('Bairros e taxas salvos.');}catch(err){notify(err.message);}
   });
   document.querySelector('[data-add-service-neighborhood]')?.addEventListener('click',()=>{
@@ -1761,7 +1765,7 @@ function handleAction(event) {
       if(!suggestions.length){notify(result.aviso||'Nenhuma sugestão encontrada. Cadastre os bairros manualmente.');return;}
       const selected=new Set((state.shop.serviceNeighborhoods||[]).map(x=>typeof x==='string'?x:(x.nome||x.name||'')));
       showDialog(`<div class="dialog-head"><h2>Bairros sugeridos</h2><p>${esc(result.aviso||'Confira os bairros e selecione os que sua loja atende.')}</p></div><form id="neighborhood-suggestion-form" class="dialog-form"><div class="suggested-neighborhood-list">${suggestions.map((item,i)=>`<label class="choice-row"><input type="checkbox" name="neighborhood" value="${esc(item.nome)}" ${selected.has(item.nome)?'checked':''}><span><strong>${esc(item.nome)}</strong><small>${esc(item.tipo||'Bairro')}</small></span></label>`).join('')}</div><label>Adicionar bairro que faltou<input name="manualNeighborhood" placeholder="Digite o nome do bairro"></label><button class="primary-button" type="submit">Adicionar selecionados</button></form>`);
-      document.querySelector('#neighborhood-suggestion-form')?.addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;const values=[...f.querySelectorAll('input[name="neighborhood"]:checked')].map(x=>x.value);const manual=String(new FormData(f).get('manualNeighborhood')||'').trim();if(manual)values.push(manual);const existing=(state.shop.serviceNeighborhoods||[]).map(x=>typeof x==='string'?{nome:x,taxa:0}:x);for(const nome of values){if(!existing.some(x=>String(x.nome||x.name).toLocaleLowerCase('pt-BR')===nome.toLocaleLowerCase('pt-BR')))existing.push({nome,taxa:0});}state.shop.serviceNeighborhoods=existing;save().then(()=>{closeDialog();render();document.querySelector('[data-disclosure=\"service-neighborhoods\"]')?.setAttribute('open','');notify('Sugestões adicionadas. Defina as taxas e salve.');}).catch(err=>notify(err.message));});
+      document.querySelector('#neighborhood-suggestion-form')?.addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;const values=[...f.querySelectorAll('input[name="neighborhood"]:checked')].map(x=>x.value);const manual=String(new FormData(f).get('manualNeighborhood')||'').trim();if(manual)values.push(manual);const existing=(state.shop.serviceNeighborhoods||[]).map(x=>typeof x==='string'?{nome:x,taxa:0}:x);for(const nome of values){if(!existing.some(x=>String(x.nome||x.name).toLocaleLowerCase('pt-BR')===nome.toLocaleLowerCase('pt-BR')))existing.push({nome,taxa:0});}state.shop.serviceNeighborhoods=existing;state.shop.storefront=state.shop.storefront||{};state.shop.storefront.serviceNeighborhoods=existing;save().then(()=>{closeDialog();render();document.querySelector('[data-disclosure=\"service-neighborhoods\"]')?.setAttribute('open','');notify('Sugestões adicionadas. Defina as taxas e salve.');}).catch(err=>notify(err.message));});
     }).catch(err=>notify(err.message)).finally(()=>{button.disabled=false;button.textContent='⌕ Sugerir bairros automaticamente';});
   }
   if (action === 'new-category') return categoryDialog();
@@ -2264,7 +2268,8 @@ function checkoutDialog() {
         <strong class="address-section-title">Endereço de entrega</strong>
         <label>Rua / Avenida<input name="street" autocomplete="address-line1" value="${esc(cached.addressParts?.street || '')}" placeholder="Nome da rua ou avenida"></label>
         <div class="address-fields-row"><label>Número<input name="street_number" autocomplete="address-line2" value="${esc(cached.addressParts?.number || '')}" placeholder="Nº"></label><label>Complemento <span class="optional-label">(opcional)</span><input name="complement" value="${esc(cached.addressParts?.complement || '')}" placeholder="Apto, casa, bloco"></label></div>
-        <label>Bairro<input name="neighborhood" autocomplete="address-level3" value="${esc(cached.addressParts?.neighborhood || '')}" placeholder="Seu bairro"></label>
+        <label>Bairro de atendimento<select name="neighborhood" autocomplete="address-level3" required><option value="">Selecione seu bairro</option>${(state.shop?.serviceNeighborhoods||[]).map((item)=>{const n=typeof item==='string'?{nome:item,taxa:0}:item;const name=String(n.nome||n.name||'').trim();return name?`<option value="${esc(name)}" data-fee="${Math.max(0,Number(n.taxa??n.fee??0))}" ${normalizeNeighborhoodName(cached.addressParts?.neighborhood)===normalizeNeighborhoodName(name)?'selected':''}>${esc(name)}</option>`:'';}).join('')}</select><small>${(state.shop?.serviceNeighborhoods||[]).length?'Escolha um dos bairros atendidos pela loja.':'A loja ainda não cadastrou bairros de entrega.'}</small></label>
+        <div class="checkout-delivery-fee" id="checkout-delivery-fee" aria-live="polite"><span>Taxa de entrega</span><strong>Selecione um bairro</strong></div>
         <div class="address-fields-row"><label>Cidade<input name="city" autocomplete="address-level2" value="${esc(cached.addressParts?.city || '')}" placeholder="Cidade"></label><label>Estado<input name="state" autocomplete="address-level1" value="${esc(cached.addressParts?.state || '')}" placeholder="UF"></label></div>
         <label>Ponto de referência <span class="optional-label">(opcional)</span><input name="reference" value="${esc(cached.addressParts?.reference || '')}" placeholder="Ex.: perto da praça"></label>
       </div>
@@ -2274,6 +2279,19 @@ function checkoutDialog() {
   `);
 
   const form = document.querySelector('#checkout-form');
+  const fulfillmentSelect=form.elements.fulfillment;
+  const neighborhoodSelect=form.elements.neighborhood;
+  const addressFields=document.querySelector('#checkout-address-fields');
+  const feeBox=document.querySelector('#checkout-delivery-fee');
+  const refreshDeliveryFields=()=>{
+    const delivery=fulfillmentSelect.value==='delivery';
+    if(addressFields)addressFields.hidden=!delivery;
+    if(neighborhoodSelect)neighborhoodSelect.required=delivery;
+    if(feeBox){const opt=neighborhoodSelect?.selectedOptions?.[0];const fee=Number(opt?.dataset?.fee||0);feeBox.innerHTML=`<span>Taxa de entrega</span><strong>${delivery&&opt?.value?money(fee):delivery?'Selecione um bairro':'R$ 0,00'}</strong>`;}
+  };
+  fulfillmentSelect?.addEventListener('change',refreshDeliveryFields);
+  neighborhoodSelect?.addEventListener('change',refreshDeliveryFields);
+  refreshDeliveryFields();
   form.onsubmit = async (event) => {
     event.preventDefault();
     const data = new FormData(form);
@@ -2281,6 +2299,9 @@ function checkoutDialog() {
     const addressParts = {street:String(data.get('street')||'').trim(),number:String(data.get('street_number')||'').trim(),complement:String(data.get('complement')||'').trim(),neighborhood:String(data.get('neighborhood')||'').trim(),city:String(data.get('city')||'').trim(),state:String(data.get('state')||'').trim(),reference:String(data.get('reference')||'').trim()};
     const address = fulfillment === 'delivery' ? [addressParts.street, addressParts.number && `nº ${addressParts.number}`, addressParts.complement, addressParts.neighborhood, [addressParts.city,addressParts.state].filter(Boolean).join(' - '), addressParts.reference && `Referência: ${addressParts.reference}`].filter(Boolean).join(', ') : '';
     if (fulfillment === 'delivery' && (!addressParts.street || !addressParts.number || !addressParts.neighborhood || !addressParts.city || !addressParts.state)) { notify('Preencha rua, número, bairro, cidade e estado.'); return; }
+    if (fulfillment === 'delivery' && !(state.shop?.serviceNeighborhoods||[]).some(item=>normalizeNeighborhoodName(typeof item==='string'?item:(item.nome||item.name||''))===normalizeNeighborhoodName(addressParts.neighborhood))) { notify('Este bairro não está cadastrado como área de atendimento da loja.'); return; }
+    const selectedNeighborhood=(state.shop?.serviceNeighborhoods||[]).find(item=>normalizeNeighborhoodName(typeof item==='string'?item:(item.nome||item.name||''))===normalizeNeighborhoodName(addressParts.neighborhood));
+    const estimatedDeliveryFee=fulfillment==='delivery'?Math.max(0,Number(typeof selectedNeighborhood==='string'?0:(selectedNeighborhood?.taxa??selectedNeighborhood?.fee??0))):0;
 
     const customer = String(data.get('customer') || '').trim();
     const phone = String(data.get('phone') || '').trim();
@@ -2298,13 +2319,13 @@ function checkoutDialog() {
     try {
       let order;
       if (publicShop()) {
-        const response=await fetch('/api/public-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({loja:publicShop(),cliente:{nome:customer,telefone:phone},tipo_entrega:fulfillment,endereco:address,endereco_partes:addressParts,pagamento:String(data.get('payment')||'Pix'),observacoes:'',itens:orderItems})});
+        const response=await fetch('/api/public-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({loja:publicShop(),cliente:{nome:customer,telefone:phone},tipo_entrega:fulfillment,endereco:address,endereco_partes:addressParts,bairro_entrega:addressParts.neighborhood,taxa_entrega:estimatedDeliveryFee,pagamento:String(data.get('payment')||'Pix'),observacoes:'',itens:orderItems})});
         const result=await response.json();if(!response.ok)throw new Error(result.error||'Não foi possível enviar o pedido.');
         const minutes=Number(state.delivery.deliveryMinutes||45);
-        order={id:result.pedido.id,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:result.pedido.status,total:Number(result.pedido.total),items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:new Date(result.pedido.created_at).getTime(),readyAt:Date.now()+minutes*60000,updatedAt:Date.now(),trackingToken:result.tracking_token};
+        order={id:result.pedido.id,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:result.pedido.status,total:Number(result.pedido.total),deliveryFee:Number(result.pedido.taxa_entrega||0),items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:new Date(result.pedido.created_at).getTime(),readyAt:Date.now()+minutes*60000,updatedAt:Date.now(),trackingToken:result.tracking_token};
         const oldProfile=JSON.parse(localStorage.getItem(clientKey)||'{}');localStorage.setItem(clientKey,JSON.stringify({ ...oldProfile,name:customer,phone,address,addressParts,lastTrackingToken:result.tracking_token,lastOrderId:order.id }));
       } else {
-        order={id:`#${Date.now().toString().slice(-4)}`,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:state.delivery.autoAccept?'Em preparo':'Aguardando',total,items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:Date.now(),readyAt:Date.now()+45*60000,updatedAt:Date.now()};
+        order={id:`#${Date.now().toString().slice(-4)}`,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:state.delivery.autoAccept?'Em preparo':'Aguardando',total:total+estimatedDeliveryFee,deliveryFee:estimatedDeliveryFee,items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:Date.now(),readyAt:Date.now()+45*60000,updatedAt:Date.now()};
       }
       localStorage.setItem(clientKey,JSON.stringify({name:customer,phone,address,addressParts,...(order.trackingToken?{lastTrackingToken:order.trackingToken,lastOrderId:order.id}:{})}));
       state.orders=state.orders.filter(o=>o.id!==order.id);state.orders.push(order);state.cart=[];
