@@ -1156,7 +1156,7 @@ function menuView() {
           <span class="manage-emoji">${product.photo ? `<img src="${product.photo}" alt="">` : '<span class="food-placeholder"></span>'}</span>
           <div>
             <strong>${esc(product.name)}</strong>
-            <small>${esc(product.category)} · ${esc(product.description)}</small>
+            <small>${esc((product.categories || [product.category]).join(' · '))} · ${esc(product.description)}</small>
           </div>
           <b>${money(product.price)}</b>
           <label class="switch">
@@ -1194,7 +1194,7 @@ function categoryView() {
           <div class="category-row">
             <span>${String(index + 1).padStart(2, '0')}</span>
             <strong>${esc(category)}</strong>
-            <small>${state.products.filter((item) => item.category === category).length} produtos</small>
+            <small>${state.products.filter((item) => (item.categories || [item.category]).includes(category)).length} produtos</small>
             <button data-action="remove-category" data-category="${esc(category)}">Remover</button>
           </div>
         `).join('') : empty('Nenhuma categoria criada', 'Comece criando a primeira aba.')}
@@ -1328,6 +1328,21 @@ function settingsView() {
           <label>Foto da loja<input type="file" accept="image/*" data-shop-photo></label>
           <label>Nome da loja<input data-setting="name" value="${esc(state.shop.name)}"></label>
           <label>Descricao<textarea data-setting="description">${esc(state.shop.description)}</textarea></label>
+          <h3>Endereço do estabelecimento</h3>
+          <div class="form-grid">
+            <label>Rua<input data-setting="addressStreet" value="${esc(state.shop.addressStreet||'')}" autocomplete="street-address"></label>
+            <label>Número<input data-setting="addressNumber" value="${esc(state.shop.addressNumber||'')}"></label>
+            <label>Complemento<input data-setting="addressComplement" value="${esc(state.shop.addressComplement||'')}"></label>
+            <label>Bairro<input data-setting="addressNeighborhood" value="${esc(state.shop.addressNeighborhood||'')}"></label>
+            <label>Cidade<input data-setting="addressCity" value="${esc(state.shop.addressCity||'')}" data-shop-city></label>
+            <label>Estado (UF ou nome)<input data-setting="addressState" value="${esc(state.shop.addressState||'')}" data-shop-state></label>
+            <label>CEP<input data-setting="addressZip" value="${esc(state.shop.addressZip||'')}"></label>
+          </div>
+          <div class="neighborhood-suggest-panel">
+            <p>Use a cidade e o estado para buscar sugestões de bairros no mapa. Revise os resultados e adicione os bairros que faltarem.</p>
+            <button type="button" class="secondary-button" data-action="suggest-neighborhoods"><span aria-hidden="true">⌕</span> Sugerir bairros automaticamente</button>
+          </div>
+          ${(state.shop.serviceNeighborhoods||[]).length ? `<div class="selected-neighborhoods"><strong>Bairros adicionados</strong><div>${state.shop.serviceNeighborhoods.map(n=>`<span>${esc(n)}</span>`).join('')}</div></div>` : ''}
           <button class="primary-button" data-action="save-shop">Salvar loja</button>
         </div>
         </div>
@@ -1436,10 +1451,10 @@ function customerShop() {
             <section id="${encodeURIComponent(category)}">
               <div class="category-heading">
                 <h2>${esc(category)}</h2>
-                <span>${state.products.filter((item) => item.category === category && item.available).length} opcoes</span>
+                <span>${state.products.filter((item) => (item.categories || [item.category]).includes(category) && item.available).length} opcoes</span>
               </div>
               <div class="customer-products">
-                ${state.products.filter((item) => item.category === category && item.available).map(customerProduct).join('')}
+                ${state.products.filter((item) => (item.categories || [item.category]).includes(category) && item.available).map(customerProduct).join('')}
               </div>
             </section>
           `).join('') : '<div class="customer-empty"><strong>O cardapio esta sendo preparado.</strong><small>Volte em breve.</small></div>'}
@@ -1711,12 +1726,34 @@ function handleAction(event) {
   const button = event.currentTarget;
   const action = button.dataset.action;
 
+  if (action === 'suggest-neighborhoods') {
+    const city=document.querySelector('[data-shop-city]')?.value.trim()||state.shop.addressCity||'';
+    const region=document.querySelector('[data-shop-state]')?.value.trim()||state.shop.addressState||'';
+    if(!city||!region){notify('Informe a cidade e o estado do endereço da loja primeiro.');return;}
+    button.disabled=true;button.textContent='Buscando sugestões...';
+    return merchantApiRequest('/api/geocode-neighborhoods','POST',{cidade:city,estado:region}).then(result=>{
+      const suggestions=result.sugestoes||[];
+      if(!suggestions.length){notify(result.aviso||'Nenhuma sugestão encontrada. Cadastre os bairros manualmente.');return;}
+      const selected=new Set(state.shop.serviceNeighborhoods||[]);
+      showDialog(`<div class="dialog-head"><h2>Bairros sugeridos</h2><p>${esc(result.aviso||'Confira os bairros e selecione os que sua loja atende.')}</p></div><form id="neighborhood-suggestion-form" class="dialog-form"><div class="suggested-neighborhood-list">${suggestions.map((item,i)=>`<label class="choice-row"><input type="checkbox" name="neighborhood" value="${esc(item.nome)}" ${selected.has(item.nome)?'checked':''}><span><strong>${esc(item.nome)}</strong><small>${esc(item.tipo||'Bairro')}</small></span></label>`).join('')}</div><label>Adicionar bairro que faltou<input name="manualNeighborhood" placeholder="Digite o nome do bairro"></label><button class="primary-button" type="submit">Adicionar selecionados</button></form>`);
+      document.querySelector('#neighborhood-suggestion-form')?.addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;const values=[...f.querySelectorAll('input[name="neighborhood"]:checked')].map(x=>x.value);const manual=String(new FormData(f).get('manualNeighborhood')||'').trim();if(manual)values.push(manual);state.shop.serviceNeighborhoods=[...new Set([...(state.shop.serviceNeighborhoods||[]),...values])];save().then(()=>{closeDialog();render();notify('Bairros selecionados salvos no perfil da loja.');}).catch(err=>notify(err.message));});
+    }).catch(err=>notify(err.message)).finally(()=>{button.disabled=false;button.textContent='⌕ Sugerir bairros automaticamente';});
+  }
   if (action === 'new-category') return categoryDialog();
   if (action === 'new-product' || action === 'edit-product') return productDialog(button.dataset.id);
   if (action === 'remove-category') {
     const categoryName = button.dataset.category;
-    state.categories = state.categories.filter((item) => item !== categoryName);
-    state.products = state.products.filter((item) => item.category !== categoryName);
+    const remaining = state.categories.filter((item) => item !== categoryName);
+    if (!remaining.length && state.products.some((item) => (item.categories || [item.category]).includes(categoryName))) {
+      notify('Crie outra categoria e transfira os produtos antes de remover esta.');
+      return;
+    }
+    state.categories = remaining;
+    state.products = state.products.map((item) => {
+      const categories = (item.categories || [item.category]).filter((name) => name !== categoryName);
+      if (!categories.length && remaining.length) categories.push(remaining[0]);
+      return { ...item, categories, category: categories[0] || remaining[0] || '' };
+    });
     return renderSaved();
   }
   if (action === 'toggle-open') {
@@ -1743,6 +1780,8 @@ function handleAction(event) {
     document.querySelectorAll('[data-setting]').forEach((input) => {
       state.shop[input.dataset.setting] = input.value.trim();
     });
+    state.shop.storefront = state.shop.storefront || {};
+    state.shop.storefront.serviceNeighborhoods = state.shop.serviceNeighborhoods || [];
     return renderSaved();
   }
   if (action === 'save-delivery') {
@@ -2057,7 +2096,7 @@ function productDialog(id) {
     <form id="product-form" class="dialog-form">
       <label class="photo-picker">+<span>Adicionar foto<input name="photo" type="file" accept="image/*"></span></label>
       <label>Nome<input name="name" required value="${esc(product?.name || '')}" placeholder="Ex.: Pizza grande"></label>
-      <label>Categoria<select name="category" required>${state.categories.map((category) => `<option ${product?.category === category ? 'selected' : ''}>${esc(category)}</option>`).join('')}</select></label>
+      <label>Categorias <small>Selecione uma ou mais. O mesmo produto aparecerá em todas elas.</small><select name="categories" multiple required size="${Math.max(3, Math.min(6, state.categories.length))}" class="multi-category-select">${state.categories.map((category) => `<option value="${esc(category)}" ${(product?.categories || [product?.category]).includes(category) ? 'selected' : ''}>${esc(category)}</option>`).join('')}</select></label>
       <label>Descrição<textarea name="description" required placeholder="Ingredientes, tamanho e diferenciais.">${esc(product?.description || '')}</textarea></label>
       <label>Preço base<input name="price" type="number" min="0.01" step="0.01" required value="${product?.price || ''}" placeholder="0,00"></label>
       <label class="choice-row"><input name="featured" type="checkbox" ${product?.featured ? 'checked' : ''}><span><strong>Produto em destaque</strong><small>Mostrar também na seção de destaque da vitrine</small></span></label>
@@ -2083,7 +2122,8 @@ function productDialog(id) {
     if(edges.length) options.push({key:'edges',title:'Escolha a borda',type:'single',min:0,max:1,choices:edges});
     if(extras.length) options.push({key:'extras',title:'Adicionais',type:'multi',min:0,max:extras.length,choices:extras});
     const finish = (photo) => {
-      const next={id:product?.id||Date.now(),name:String(data.get('name')||'').trim(),category:String(data.get('category')||state.categories[0]||'Geral'),description:String(data.get('description')||'').trim(),price:Number(data.get('price')||0),photo:photo||product?.photo||null,available:product?.available??true,options,featured:data.get('featured')==='on',label:String(data.get('label')||'').trim()};
+      const selectedCategories = data.getAll('categories').map((name) => String(name).trim()).filter((name) => state.categories.includes(name));
+      const next={id:product?.id||Date.now(),name:String(data.get('name')||'').trim(),category:selectedCategories[0] || state.categories[0] || 'Geral',categories:selectedCategories.length ? selectedCategories : [state.categories[0] || 'Geral'],description:String(data.get('description')||'').trim(),price:Number(data.get('price')||0),photo:photo||product?.photo||null,available:product?.available??true,options,featured:data.get('featured')==='on',label:String(data.get('label')||'').trim()};
       if(product) Object.assign(product,next); else state.products.push(next);
       closeDialog(); renderSaved();
     };
@@ -2188,7 +2228,14 @@ function checkoutDialog() {
       <label>Seu nome<input name="customer" required value="${esc(cached.name || '')}" placeholder="Como podemos chamar voce?"></label>
       <label>Telefone<input name="phone" required value="${esc(cached.phone || '')}" placeholder="(00) 00000-0000"></label>
       <label>Forma de recebimento<select name="fulfillment">${modes}</select></label>
-      <label class="address-field">Endereco de entrega<input name="address" value="${esc(cached.address || '')}" placeholder="Rua, numero e complemento"></label>
+      <div class="address-field" id="checkout-address-fields">
+        <strong class="address-section-title">Endereço de entrega</strong>
+        <label>Rua / Avenida<input name="street" autocomplete="address-line1" value="${esc(cached.addressParts?.street || '')}" placeholder="Nome da rua ou avenida"></label>
+        <div class="address-fields-row"><label>Número<input name="street_number" autocomplete="address-line2" value="${esc(cached.addressParts?.number || '')}" placeholder="Nº"></label><label>Complemento <span class="optional-label">(opcional)</span><input name="complement" value="${esc(cached.addressParts?.complement || '')}" placeholder="Apto, casa, bloco"></label></div>
+        <label>Bairro<input name="neighborhood" autocomplete="address-level3" value="${esc(cached.addressParts?.neighborhood || '')}" placeholder="Seu bairro"></label>
+        <div class="address-fields-row"><label>Cidade<input name="city" autocomplete="address-level2" value="${esc(cached.addressParts?.city || '')}" placeholder="Cidade"></label><label>Estado<input name="state" autocomplete="address-level1" value="${esc(cached.addressParts?.state || '')}" placeholder="UF"></label></div>
+        <label>Ponto de referência <span class="optional-label">(opcional)</span><input name="reference" value="${esc(cached.addressParts?.reference || '')}" placeholder="Ex.: perto da praça"></label>
+      </div>
       <label>Pagamento<select name="payment"><option>Pix</option><option>Cartao na entrega</option><option>Dinheiro</option></select></label>
       <button class="primary-button">Enviar pedido</button>
     </form>
@@ -2199,12 +2246,9 @@ function checkoutDialog() {
     event.preventDefault();
     const data = new FormData(form);
     const fulfillment = String(data.get('fulfillment') || 'pickup');
-    const address = String(data.get('address') || '').trim();
-
-    if (fulfillment === 'delivery' && !address) {
-      notify('Informe o endereco de entrega.');
-      return;
-    }
+    const addressParts = {street:String(data.get('street')||'').trim(),number:String(data.get('street_number')||'').trim(),complement:String(data.get('complement')||'').trim(),neighborhood:String(data.get('neighborhood')||'').trim(),city:String(data.get('city')||'').trim(),state:String(data.get('state')||'').trim(),reference:String(data.get('reference')||'').trim()};
+    const address = fulfillment === 'delivery' ? [addressParts.street, addressParts.number && `nº ${addressParts.number}`, addressParts.complement, addressParts.neighborhood, [addressParts.city,addressParts.state].filter(Boolean).join(' - '), addressParts.reference && `Referência: ${addressParts.reference}`].filter(Boolean).join(', ') : '';
+    if (fulfillment === 'delivery' && (!addressParts.street || !addressParts.number || !addressParts.neighborhood || !addressParts.city || !addressParts.state)) { notify('Preencha rua, número, bairro, cidade e estado.'); return; }
 
     const customer = String(data.get('customer') || '').trim();
     const phone = String(data.get('phone') || '').trim();
@@ -2222,15 +2266,15 @@ function checkoutDialog() {
     try {
       let order;
       if (publicShop()) {
-        const response=await fetch('/api/public-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({loja:publicShop(),cliente:{nome:customer,telefone:phone},tipo_entrega:fulfillment,endereco:address,pagamento:String(data.get('payment')||'Pix'),observacoes:'',itens:orderItems})});
+        const response=await fetch('/api/public-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({loja:publicShop(),cliente:{nome:customer,telefone:phone},tipo_entrega:fulfillment,endereco:address,endereco_partes:addressParts,pagamento:String(data.get('payment')||'Pix'),observacoes:'',itens:orderItems})});
         const result=await response.json();if(!response.ok)throw new Error(result.error||'Não foi possível enviar o pedido.');
         const minutes=Number(state.delivery.deliveryMinutes||45);
         order={id:result.pedido.id,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:result.pedido.status,total:Number(result.pedido.total),items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:new Date(result.pedido.created_at).getTime(),readyAt:Date.now()+minutes*60000,updatedAt:Date.now(),trackingToken:result.tracking_token};
-        const oldProfile=JSON.parse(localStorage.getItem(clientKey)||'{}');localStorage.setItem(clientKey,JSON.stringify({ ...oldProfile,name:customer,phone,address,lastTrackingToken:result.tracking_token,lastOrderId:order.id }));
+        const oldProfile=JSON.parse(localStorage.getItem(clientKey)||'{}');localStorage.setItem(clientKey,JSON.stringify({ ...oldProfile,name:customer,phone,address,addressParts,lastTrackingToken:result.tracking_token,lastOrderId:order.id }));
       } else {
         order={id:`#${Date.now().toString().slice(-4)}`,customer,phone,address,payment:String(data.get('payment')||'Pix'),fulfillment,status:state.delivery.autoAccept?'Em preparo':'Aguardando',total,items:state.cart.map(item=>({id:item.id,name:item.name,description:item.description,quantity:item.quantity,notes:item.notes,selections:item.selections||[],price:item.price})),notes:'',createdAt:Date.now(),readyAt:Date.now()+45*60000,updatedAt:Date.now()};
       }
-      localStorage.setItem(clientKey,JSON.stringify({name:customer,phone,address,...(order.trackingToken?{lastTrackingToken:order.trackingToken,lastOrderId:order.id}:{})}));
+      localStorage.setItem(clientKey,JSON.stringify({name:customer,phone,address,addressParts,...(order.trackingToken?{lastTrackingToken:order.trackingToken,lastOrderId:order.id}:{})}));
       state.orders=state.orders.filter(o=>o.id!==order.id);state.orders.push(order);state.cart=[];
       try{localStorage.setItem(stateKey,JSON.stringify(state));}catch{}
       if(order.trackingToken){
