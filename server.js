@@ -625,7 +625,7 @@ http.createServer((request, response) => {
       if(request.method==="GET"){const r=await subscriptionPool.query("SELECT id,status,endereco,tipo_entrega,created_at FROM public.pedidos WHERE loja_id=$1 ORDER BY created_at DESC LIMIT 300",[shopId]);return respondJson(response,200,{pedidos:r.rows});}
       const b=await readRequestJson(request),orderId=String(b.pedido_id||""),status=String(b.status||"");const allowed=["Aguardando","Em preparo","Pronto","Saiu para entrega","Em rota","Entregue","Cancelado","Cancelada","Problema na entrega"];
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(orderId)||!allowed.includes(status))return respondJson(response,400,{error:"Pedido ou status invalido"});
-      const r=await subscriptionPool.query("UPDATE public.pedidos SET status=$3,updated_at=NOW(),confirmado_em=CASE WHEN $4::text='Entregue' THEN NOW() ELSE confirmado_em END WHERE id=$1 AND loja_id=$2 RETURNING id,status,updated_at",[orderId,shopId,status,status]);if(!r.rowCount)return respondJson(response,404,{error:"Pedido nao encontrado"});return respondJson(response,200,{pedido:r.rows[0]});
+      const client=await subscriptionPool.connect();try{await client.query("BEGIN");const r=await client.query("UPDATE public.pedidos SET status=$3,updated_at=NOW(),confirmado_em=CASE WHEN $4::text='Entregue' THEN NOW() ELSE confirmado_em END WHERE id=$1 AND loja_id=$2 RETURNING id,status,updated_at,entregador_id,taxa_entrega,endereco,tipo_entrega",[orderId,shopId,status,status]);if(!r.rowCount){await client.query("ROLLBACK");return respondJson(response,404,{error:"Pedido nao encontrado"});}const p=r.rows[0];if(status==='Entregue'&&p.tipo_entrega==='delivery'&&p.entregador_id){await client.query(`INSERT INTO public.historico_entregas(loja_id,pedido_id,entregador_id,taxa_recebida,endereco,concluida_em) VALUES($1,$2,$3,$4,$5,NOW()) ON CONFLICT(pedido_id) DO NOTHING`,[shopId,p.id,p.entregador_id,Number(p.taxa_entrega||0),p.endereco]);}await client.query("COMMIT");return respondJson(response,200,{pedido:{id:p.id,status:p.status,updated_at:p.updated_at}});}catch(e){await client.query("ROLLBACK");throw e;}finally{client.release();}
     })().catch(e=>{console.error("Falha pedidos comerciante:",e.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel atualizar o pedido"});});return;
   }
 
@@ -642,9 +642,17 @@ http.createServer((request, response) => {
       if (!shopRes.rowCount) return respondJson(response, 404, { error: "Cadastre sua loja primeiro" });
       const shopId = shopRes.rows[0].id;
       const routeMatch = pathname.match(/^\/api\/merchant\/couriers\/([0-9a-f-]{36})$/i);
+      if (pathname === "/api/merchant/couriers/history" && request.method === "GET") {
+        const courierId=String(url.searchParams.get("entregador_id")||"");
+        if(!/^[0-9a-f-]{36}$/i.test(courierId))return respondJson(response,400,{error:"Entregador invalido"});
+        const rows=await subscriptionPool.query(`SELECT h.id,h.pedido_id,h.taxa_recebida,h.endereco,h.concluida_em,e.nome AS entregador_nome FROM public.historico_entregas h JOIN public.entregadores e ON e.id=h.entregador_id WHERE h.loja_id=$1 AND h.entregador_id=$2 ORDER BY h.concluida_em DESC LIMIT 300`,[shopId,courierId]);
+        return respondJson(response,200,{historico:rows.rows});
+      }
       if (pathname === "/api/merchant/couriers" && request.method === "GET") {
         const rows = await subscriptionPool.query(`SELECT e.id,e.nome,e.telefone,e.veiculo,e.ativo,e.created_at,
-          (SELECT count(*)::int FROM public.pedidos p WHERE p.entregador_id=e.id AND p.status NOT IN ('Entregue','Cancelado','Cancelada')) AS pedidos_ativos
+          (SELECT count(*)::int FROM public.pedidos p WHERE p.entregador_id=e.id AND p.status NOT IN ('Entregue','Cancelado','Cancelada')) AS pedidos_ativos,
+          (SELECT count(*)::int FROM public.historico_entregas h WHERE h.entregador_id=e.id AND (h.concluida_em AT TIME ZONE 'America/Recife')::date=(NOW() AT TIME ZONE 'America/Recife')::date) AS entregas_hoje,
+          (SELECT COALESCE(sum(h.taxa_recebida),0)::numeric(12,2) FROM public.historico_entregas h WHERE h.entregador_id=e.id AND (h.concluida_em AT TIME ZONE 'America/Recife')::date=(NOW() AT TIME ZONE 'America/Recife')::date) AS ganhos_hoje
           FROM public.entregadores e WHERE e.loja_id=$1 ORDER BY e.created_at DESC`, [shopId]);
         return respondJson(response, 200, { entregadores: rows.rows });
       }
@@ -662,6 +670,8 @@ http.createServer((request, response) => {
         return updated.rowCount?respondJson(response,200,{entregador:updated.rows[0]}):respondJson(response,404,{error:"Entregador nao encontrado"});
       }
       if (routeMatch && request.method === "DELETE") {
+        const hist=await subscriptionPool.query("SELECT 1 FROM public.historico_entregas WHERE entregador_id=$1 LIMIT 1",[routeMatch[1]]);
+        if(hist.rowCount){const archived=await subscriptionPool.query("UPDATE public.entregadores SET ativo=false,updated_at=NOW() WHERE id=$1 AND loja_id=$2 RETURNING id",[routeMatch[1],shopId]);return archived.rowCount?respondJson(response,200,{ok:true,archived:true}):respondJson(response,404,{error:"Entregador nao encontrado"});}
         await subscriptionPool.query("UPDATE public.pedidos SET entregador_id=NULL WHERE entregador_id=$1 AND loja_id=$2",[routeMatch[1],shopId]);
         const deleted=await subscriptionPool.query("DELETE FROM public.entregadores WHERE id=$1 AND loja_id=$2 RETURNING id",[routeMatch[1],shopId]);
         return deleted.rowCount?respondJson(response,200,{ok:true}):respondJson(response,404,{error:"Entregador nao encontrado"});
@@ -693,10 +703,12 @@ http.createServer((request, response) => {
           c.nome AS cliente_nome,c.telefone AS cliente_telefone,
           COALESCE(json_agg(json_build_object('nome',i.produto_nome,'quantidade',i.quantidade,'observacao',i.observacao)) FILTER(WHERE i.id IS NOT NULL),'[]') AS itens
           FROM public.pedidos p JOIN public.clientes c ON c.id=p.cliente_id LEFT JOIN public.itens_do_pedido i ON i.pedido_id=p.id
-          WHERE p.tipo_entrega='delivery' AND p.status IN ('Pronto','Saiu para entrega')
+          WHERE p.tipo_entrega='delivery' AND p.status IN ('Pronto','Saiu para entrega','Em rota')
             AND (p.entregador_id=$1 OR p.entregador_id IS NULL)
           GROUP BY p.id,c.nome,c.telefone ORDER BY CASE WHEN p.entregador_id=$1 THEN 0 ELSE 1 END,p.created_at`,[courier.id]);
-        return respondJson(response,200,{entregador:{nome:courier.nome,loja:courier.loja_nome},pedidos:orders.rows});
+        const history=await subscriptionPool.query(`SELECT h.id,h.pedido_id,h.taxa_recebida,h.endereco,h.concluida_em FROM public.historico_entregas h WHERE h.entregador_id=$1 AND h.loja_id=$2 ORDER BY h.concluida_em DESC LIMIT 300`,[courier.id,courier.loja_id]);
+        const today=await subscriptionPool.query(`SELECT count(*)::int AS quantidade,COALESCE(sum(taxa_recebida),0)::numeric(12,2) AS valor FROM public.historico_entregas WHERE entregador_id=$1 AND (concluida_em AT TIME ZONE 'America/Recife')::date=(NOW() AT TIME ZONE 'America/Recife')::date`,[courier.id]);
+        return respondJson(response,200,{entregador:{nome:courier.nome,loja:courier.loja_nome},pedidos:orders.rows,historico:history.rows,resumo_hoje:today.rows[0]});
       }
       const body=await readRequestJson(request), allowed=["Saiu para entrega","Em rota","Entregue","Problema na entrega"];
       if(body.acao==="aceitar"){
@@ -711,7 +723,7 @@ http.createServer((request, response) => {
       if(body.status&&!allowed.includes(body.status))return respondJson(response,400,{error:"Status nao permitido"});
       const client=await subscriptionPool.connect();try{await client.query("BEGIN");
         if(body.latitude!==undefined&&body.longitude!==undefined){const lat=Number(body.latitude),lon=Number(body.longitude);if(!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)throw new Error("Coordenadas invalidas");await client.query("UPDATE public.entregadores SET ultima_latitude=$2,ultima_longitude=$3,localizacao_atualizada_em=NOW(),updated_at=NOW() WHERE id=$1",[courier.id,lat,lon]);}
-        if(body.pedido_id&&body.status){const result=await client.query("UPDATE public.pedidos SET status=$3::text,updated_at=NOW() WHERE id=$1 AND entregador_id=$2 AND status NOT IN ('Entregue','Cancelado','Cancelada') RETURNING id",[body.pedido_id,courier.id,body.status]);if(!result.rowCount)throw new Error("Pedido nao atribuido ou ja encerrado");}
+        if(body.pedido_id&&body.status){const result=await client.query("UPDATE public.pedidos SET status=$3::text,updated_at=NOW(),confirmado_em=CASE WHEN $3::text='Entregue' THEN NOW() ELSE confirmado_em END WHERE id=$1 AND entregador_id=$2 AND loja_id=$4 AND tipo_entrega='delivery' AND status NOT IN ('Entregue','Cancelado','Cancelada') RETURNING id,loja_id,taxa_entrega,endereco",[body.pedido_id,courier.id,body.status,courier.loja_id]);if(!result.rowCount)throw new Error("Pedido nao atribuido ou ja encerrado");if(body.status==='Entregue'){const p=result.rows[0];await client.query(`INSERT INTO public.historico_entregas(loja_id,pedido_id,entregador_id,taxa_recebida,endereco,concluida_em) VALUES($1,$2,$3,$4,$5,NOW()) ON CONFLICT(pedido_id) DO NOTHING`,[p.loja_id,p.id,courier.id,Number(p.taxa_entrega||0),p.endereco]);}}
         await client.query("COMMIT");return respondJson(response,200,{ok:true});
       }catch(e){await client.query("ROLLBACK");return respondJson(response,400,{error:e.message});}finally{client.release();}
     })().catch(error=>{console.error("Falha portal entregador:",error.message);if(!response.headersSent)respondJson(response,500,{error:"Nao foi possivel carregar as entregas"});});return;
