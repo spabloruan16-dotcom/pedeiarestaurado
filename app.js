@@ -1158,7 +1158,7 @@ function menuView() {
             <strong>${esc(product.name)}</strong>
             <small>${esc((product.categories || [product.category]).join(' · '))} · ${esc(product.description)}</small>
           </div>
-          <b>${money(product.price)}</b>
+          <b>${product.options?.some(g=>g.key==='sizes') ? `A partir de ${money(product.price)}` : money(product.price)}</b>
           <label class="switch">
             <input type="checkbox" data-product="${product.id}" ${product.available ? 'checked' : ''}>
             <span></span>
@@ -1338,13 +1338,21 @@ function settingsView() {
             <label>Estado (UF ou nome)<input data-setting="addressState" value="${esc(state.shop.addressState||'')}" data-shop-state></label>
             <label>CEP<input data-setting="addressZip" value="${esc(state.shop.addressZip||'')}"></label>
           </div>
-          <div class="neighborhood-suggest-panel">
-            <p>Use a cidade e o estado para buscar sugestões de bairros no mapa. Revise os resultados e adicione os bairros que faltarem.</p>
-            <button type="button" class="secondary-button" data-action="suggest-neighborhoods"><span aria-hidden="true">⌕</span> Sugerir bairros automaticamente</button>
-          </div>
-          ${(state.shop.serviceNeighborhoods||[]).length ? `<div class="selected-neighborhoods"><strong>Bairros adicionados</strong><div>${state.shop.serviceNeighborhoods.map(n=>`<span>${esc(n)}</span>`).join('')}</div></div>` : ''}
           <button class="primary-button" data-action="save-shop">Salvar loja</button>
         </div>
+        </div>
+      </details>
+
+      <details class="panel shop-editor settings-disclosure" data-disclosure="service-neighborhoods">
+        <summary class="disclosure-summary"><span><small>ENTREGA</small><strong>Bairros de atendimento</strong><span>Defina cobertura e taxa por bairro</span></span><span class="disclosure-indicator" aria-hidden="true"></span></summary>
+        <div class="disclosure-body editor-body">
+          <p class="muted">As sugestões são referências geográficas. Confirme os bairros que sua loja realmente atende e ajuste a taxa de cada um.</p>
+          <div class="neighborhood-suggest-panel"><button type="button" class="secondary-button" data-action="suggest-neighborhoods"><span aria-hidden="true">⌕</span> Sugerir bairros pela cidade e estado</button></div>
+          <form id="service-neighborhood-form" class="dialog-form">
+            <div class="service-neighborhood-list">${(state.shop.serviceNeighborhoods||[]).map((item)=>{const n=typeof item==='string'?{nome:item,taxa:0}:item;return `<div class="service-neighborhood-row"><label>Bairro<input data-service-name value="${esc(n.nome||n.name||'')}" required maxlength="100"></label><label>Taxa de entrega (R$)<input data-service-fee type="number" min="0" step="0.01" value="${Number(n.taxa??n.fee??0)}" required></label><button type="button" class="secondary-button" data-remove-service-neighborhood aria-label="Remover bairro">Remover</button></div>`;}).join('')}</div>
+            <div class="service-neighborhood-row service-neighborhood-add"><label>Adicionar bairro manualmente<input name="newNeighborhood" maxlength="100" placeholder="Nome do bairro"></label><label>Taxa (R$)<input name="newNeighborhoodFee" type="number" min="0" step="0.01" value="0"></label><button type="button" class="secondary-button" data-add-service-neighborhood>Adicionar</button></div>
+            <button class="primary-button" type="submit">Salvar bairros e taxas</button>
+          </form>
         </div>
       </details>
 
@@ -1412,7 +1420,7 @@ function customerShop() {
 
   const customerChatBadge = unreadMessagesCount('customer') > 0 ? `<span class="chat-badge">${unreadMessagesCount('customer')}</span>` : '';
   app.innerHTML = `
-    <div class="customer-app">
+    <div class="customer-app" style="--store-accent:${/^#[0-9a-f]{6}$/i.test(state.shop.themeColor || '') ? state.shop.themeColor : '#b9362b'}">
       <header class="customer-header">
         ${brand()}
         <div class="customer-header-actions">
@@ -1420,7 +1428,7 @@ function customerShop() {
         </div>
       </header>
 
-      <section class="store-hero" style="--store-accent:${/^#[0-9a-f]{6}$/i.test(state.shop.themeColor || '') ? state.shop.themeColor : '#b9362b'}">
+      <section class="store-hero" style="--store-accent:${/^#[0-9a-f]{6}$/i.test(state.shop.themeColor || '') ? state.shop.themeColor : '#b9362b'};">
         ${state.shop.cover ? `<div class="store-cover" style="background-image:linear-gradient(90deg,rgba(15,20,17,.76),rgba(15,20,17,.12)),url('${esc(state.shop.cover)}')"></div>` : ''}
         ${state.shop.photo ? `<img class="store-photo" src="${esc(state.shop.photo)}" alt="">` : '<div class="store-avatar-big"></div>'}
         <div class="store-hero-copy">
@@ -1586,7 +1594,7 @@ function customerProduct(product) {
         <h3>${product.featured ? '⭐ ' : ''}${esc(product.name)}</h3>
         ${product.label ? `<span class="product-label">${esc(product.label)}</span>` : ''}
         <p>${esc(product.description)}</p>
-        <strong>${money(product.price)}</strong>
+        <strong>${product.options?.some(g=>g.key==='sizes') ? `A partir de ${money(product.price)}` : money(product.price)}</strong>
       </div>
       <button class="add-food" data-action="add-cart" data-id="${product.id}">${product.options?.length ? 'Personalizar' : 'Adicionar'}</button>
     </article>
@@ -1678,6 +1686,23 @@ function bindMerchant() {
     button.onclick = handleAction;
   });
 
+  document.querySelector('#service-neighborhood-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const rows=[...document.querySelectorAll('.service-neighborhood-row:not(.service-neighborhood-add)')];
+    const values=rows.map(row=>({nome:row.querySelector('[data-service-name]')?.value.trim()||'',taxa:Number(row.querySelector('[data-service-fee]')?.value||0)})).filter(x=>x.nome);
+    if(values.some(x=>!Number.isFinite(x.taxa)||x.taxa<0)){notify('Informe taxas válidas e não negativas.');return;}
+    state.shop.serviceNeighborhoods=values;
+    try{await save();render();document.querySelector('[data-disclosure=\"service-neighborhoods\"]')?.setAttribute('open','');notify('Bairros e taxas salvos.');}catch(err){notify(err.message);}
+  });
+  document.querySelector('[data-add-service-neighborhood]')?.addEventListener('click',()=>{
+    const form=document.querySelector('#service-neighborhood-form'), name=form?.elements.newNeighborhood.value.trim(), fee=Number(form?.elements.newNeighborhoodFee.value||0);
+    if(!name){notify('Digite o nome do bairro.');return;}
+    const exists=[...document.querySelectorAll('[data-service-name]')].some(x=>x.value.trim().toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR'));
+    if(exists){notify('Esse bairro já foi adicionado.');return;}
+    const list=document.querySelector('.service-neighborhood-list');const row=document.createElement('div');row.className='service-neighborhood-row';row.innerHTML=`<label>Bairro<input data-service-name required maxlength="100"></label><label>Taxa de entrega (R$)<input data-service-fee type="number" min="0" step="0.01" required></label><button type="button" class="secondary-button" data-remove-service-neighborhood>Remover</button>`;row.querySelector('[data-service-name]').value=name;row.querySelector('[data-service-fee]').value=String(fee);row.querySelector('[data-remove-service-neighborhood]').addEventListener('click',()=>row.remove());list?.append(row);form.elements.newNeighborhood.value='';
+  });
+  document.querySelectorAll('[data-remove-service-neighborhood]').forEach(button=>button.addEventListener('click',()=>button.closest('.service-neighborhood-row')?.remove()));
+
   document.querySelectorAll('[data-filter]').forEach((button) => {
     button.onclick = () => {
       state.orderFilter = button.dataset.filter;
@@ -1734,9 +1759,9 @@ function handleAction(event) {
     return merchantApiRequest('/api/geocode-neighborhoods','POST',{cidade:city,estado:region}).then(result=>{
       const suggestions=result.sugestoes||[];
       if(!suggestions.length){notify(result.aviso||'Nenhuma sugestão encontrada. Cadastre os bairros manualmente.');return;}
-      const selected=new Set(state.shop.serviceNeighborhoods||[]);
+      const selected=new Set((state.shop.serviceNeighborhoods||[]).map(x=>typeof x==='string'?x:(x.nome||x.name||'')));
       showDialog(`<div class="dialog-head"><h2>Bairros sugeridos</h2><p>${esc(result.aviso||'Confira os bairros e selecione os que sua loja atende.')}</p></div><form id="neighborhood-suggestion-form" class="dialog-form"><div class="suggested-neighborhood-list">${suggestions.map((item,i)=>`<label class="choice-row"><input type="checkbox" name="neighborhood" value="${esc(item.nome)}" ${selected.has(item.nome)?'checked':''}><span><strong>${esc(item.nome)}</strong><small>${esc(item.tipo||'Bairro')}</small></span></label>`).join('')}</div><label>Adicionar bairro que faltou<input name="manualNeighborhood" placeholder="Digite o nome do bairro"></label><button class="primary-button" type="submit">Adicionar selecionados</button></form>`);
-      document.querySelector('#neighborhood-suggestion-form')?.addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;const values=[...f.querySelectorAll('input[name="neighborhood"]:checked')].map(x=>x.value);const manual=String(new FormData(f).get('manualNeighborhood')||'').trim();if(manual)values.push(manual);state.shop.serviceNeighborhoods=[...new Set([...(state.shop.serviceNeighborhoods||[]),...values])];save().then(()=>{closeDialog();render();notify('Bairros selecionados salvos no perfil da loja.');}).catch(err=>notify(err.message));});
+      document.querySelector('#neighborhood-suggestion-form')?.addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;const values=[...f.querySelectorAll('input[name="neighborhood"]:checked')].map(x=>x.value);const manual=String(new FormData(f).get('manualNeighborhood')||'').trim();if(manual)values.push(manual);const existing=(state.shop.serviceNeighborhoods||[]).map(x=>typeof x==='string'?{nome:x,taxa:0}:x);for(const nome of values){if(!existing.some(x=>String(x.nome||x.name).toLocaleLowerCase('pt-BR')===nome.toLocaleLowerCase('pt-BR')))existing.push({nome,taxa:0});}state.shop.serviceNeighborhoods=existing;save().then(()=>{closeDialog();render();document.querySelector('[data-disclosure=\"service-neighborhoods\"]')?.setAttribute('open','');notify('Sugestões adicionadas. Defina as taxas e salve.');}).catch(err=>notify(err.message));});
     }).catch(err=>notify(err.message)).finally(()=>{button.disabled=false;button.textContent='⌕ Sugerir bairros automaticamente';});
   }
   if (action === 'new-category') return categoryDialog();
@@ -2096,9 +2121,10 @@ function productDialog(id) {
     <form id="product-form" class="dialog-form">
       <label class="photo-picker">+<span>Adicionar foto<input name="photo" type="file" accept="image/*"></span></label>
       <label>Nome<input name="name" required value="${esc(product?.name || '')}" placeholder="Ex.: Pizza grande"></label>
-      <label>Categorias <small>Selecione uma ou mais. O mesmo produto aparecerá em todas elas.</small><select name="categories" multiple required size="${Math.max(3, Math.min(6, state.categories.length))}" class="multi-category-select">${state.categories.map((category) => `<option value="${esc(category)}" ${(product?.categories || [product?.category]).includes(category) ? 'selected' : ''}>${esc(category)}</option>`).join('')}</select></label>
+      <fieldset class="category-check-grid"><legend>Categorias disponíveis</legend><small>Marque todas as categorias em que este mesmo produto deve aparecer.</small>${state.categories.map((category) => `<label class="category-check"><input type="checkbox" name="categories" value="${esc(category)}" ${(product?.categories || [product?.category]).includes(category) ? 'checked' : ''}><span>${esc(category)}</span></label>`).join('')}</fieldset>
       <label>Descrição<textarea name="description" required placeholder="Ingredientes, tamanho e diferenciais.">${esc(product?.description || '')}</textarea></label>
-      <label>Preço base<input name="price" type="number" min="0.01" step="0.01" required value="${product?.price || ''}" placeholder="0,00"></label>
+      <section class="size-price-editor"><h3>Preços por tamanho/categoria</h3><p>Se as categorias forem tamanhos, informe o preço de cada uma. O cliente escolherá o tamanho antes de adicionar à sacola.</p>${state.categories.map((category) => { const oldSize=groups.find(g=>g.key==='sizes')?.choices?.find(c=>c.name===category); const price=oldSize?Number(product?.price||0)+Number(oldSize.price||0):Number(product?.price||0); return `<label class="size-price-row"><span>${esc(category)}</span><input name="sizeprice-${esc(slug(category))}" data-size-category="${esc(category)}" type="number" min="0.01" step="0.01" value="${product ? price.toFixed(2) : ''}" placeholder="Preço em R$"></label>`; }).join('')}</section>
+      <label>Preço base <small>Usado como preço inicial; os valores por tamanho são configurados acima.</small><input name="price" type="number" min="0" step="0.01" value="${product?.price || ''}" placeholder="Informe se não usar preços por tamanho"></label>
       <label class="choice-row"><input name="featured" type="checkbox" ${product?.featured ? 'checked' : ''}><span><strong>Produto em destaque</strong><small>Mostrar também na seção de destaque da vitrine</small></span></label>
       <label>Etiqueta opcional<input name="label" maxlength="32" value="${esc(product?.label || '')}" placeholder="Ex.: Mais vendido"></label>
       <div class="product-options-config"><h3>Personalização do pedido</h3><p>Opcional. Cadastre uma opção por linha. Use <code>Nome|Preço adicional</code>; deixe o preço de fora para opções sem custo.</p>
@@ -2117,13 +2143,19 @@ function productDialog(id) {
       const [name,...priceParts]=line.split('|'); return {id:`${key}-${slug(name)}-${Math.random().toString(36).slice(2,7)}`,name:name.trim().slice(0,70),price:Math.max(0,Number(priceParts.join('|').replace(',','.'))||0)};
     }).filter(c=>c.name);
     const flavors=parseChoices('flavors'), edges=parseChoices('edges'), extras=parseChoices('extras');
+    const selectedCategories = data.getAll('categories').map((name) => String(name).trim()).filter((name) => state.categories.includes(name));
+    const prices=selectedCategories.map(name=>({name,price:Math.max(0,Number(data.get(`sizeprice-${slug(name)}`)||0))})).filter(x=>x.price>0);
+    if(!selectedCategories.length){notify('Selecione pelo menos uma categoria.');return;}
+    if(selectedCategories.length>1 && prices.length!==selectedCategories.length){notify('Informe o preço de cada categoria selecionada.');return;}
+    if(!prices.length && Number(data.get('price')||0)<=0){notify('Informe um preço válido para o produto.');return;}
+    const minPrice=prices.length?Math.min(...prices.map(x=>x.price)):Math.max(0,Number(data.get('price')||0));
     const options=[];
+    if(prices.length>1) options.push({key:'sizes',title:'Escolha o tamanho',type:'single',min:1,max:1,priceMode:'delta',choices:prices.map((x,i)=>({id:`size-${slug(x.name)}`,name:x.name,price:Number((x.price-minPrice).toFixed(2))}))});
     if(flavors.length) options.push({key:'flavors',title:'Escolha os sabores',type:'multi',min:1,max:Math.max(1,Math.min(6,Number(data.get('flavorMax')||1))),choices:flavors});
     if(edges.length) options.push({key:'edges',title:'Escolha a borda',type:'single',min:0,max:1,choices:edges});
     if(extras.length) options.push({key:'extras',title:'Adicionais',type:'multi',min:0,max:extras.length,choices:extras});
     const finish = (photo) => {
-      const selectedCategories = data.getAll('categories').map((name) => String(name).trim()).filter((name) => state.categories.includes(name));
-      const next={id:product?.id||Date.now(),name:String(data.get('name')||'').trim(),category:selectedCategories[0] || state.categories[0] || 'Geral',categories:selectedCategories.length ? selectedCategories : [state.categories[0] || 'Geral'],description:String(data.get('description')||'').trim(),price:Number(data.get('price')||0),photo:photo||product?.photo||null,available:product?.available??true,options,featured:data.get('featured')==='on',label:String(data.get('label')||'').trim()};
+      const next={id:product?.id||Date.now(),name:String(data.get('name')||'').trim(),category:selectedCategories[0] || state.categories[0] || 'Geral',categories:selectedCategories.length ? selectedCategories : [state.categories[0] || 'Geral'],description:String(data.get('description')||'').trim(),price:prices.length?minPrice:Number(data.get('price')||0),photo:photo||product?.photo||null,available:product?.available??true,options,featured:data.get('featured')==='on',label:String(data.get('label')||'').trim()};
       if(product) Object.assign(product,next); else state.products.push(next);
       closeDialog(); renderSaved();
     };
@@ -2138,7 +2170,7 @@ function addConfiguredProduct(product, selections, extraPrice) {
 
 function productOptionsDialog(product) {
   const groups=(product.options||[]).filter(g=>(g.choices||[]).length);
-  const groupMarkup=groups.map(group=>`<section class="customer-option-group"><div class="option-group-heading"><strong>${esc(group.title||group.key)}</strong><small>${group.type==='multi'?`Escolha até ${group.max}`:'Escolha uma opção' }${group.min?` · mínimo ${group.min}`:''}</small></div>${group.choices.map(choice=>`<label class="customer-option-choice"><input type="${group.type==='multi'?'checkbox':'radio'}" name="option-${esc(group.key)}" value="${esc(choice.id)}" data-option-group="${esc(group.key)}" data-option-name="${esc(choice.name)}" data-option-price="${Number(choice.price)||0}"><span>${esc(choice.name)}</span><b>${Number(choice.price)?`+ ${money(choice.price)}`:'Grátis'}</b></label>`).join('')}</section>`).join('');
+  const groupMarkup=groups.map(group=>`<section class="customer-option-group"><div class="option-group-heading"><strong>${esc(group.title||group.key)}</strong><small>${group.type==='multi'?`Escolha até ${group.max}`:'Escolha uma opção' }${group.min?` · mínimo ${group.min}`:''}</small></div>${group.choices.map(choice=>`<label class="customer-option-choice"><input type="${group.type==='multi'?'checkbox':'radio'}" name="option-${esc(group.key)}" value="${esc(choice.id)}" data-option-group="${esc(group.key)}" data-option-name="${esc(choice.name)}" data-option-price="${Number(choice.price)||0}"><span>${esc(choice.name)}</span><b>${group.key==='sizes'?money(Number(product.price||0)+Number(choice.price||0)):(Number(choice.price)?`+ ${money(choice.price)}`:'Grátis')}</b></label>`).join('')}</section>`).join('');
   showDialog(`<div class="dialog-head"><span class="category-icon">Personalizar</span><h2>${esc(product.name)}</h2><p>${esc(product.description||'Escolha as opções do seu pedido.')}</p></div><form id="custom-product-form" class="dialog-form"><div class="option-base-price">Preço base <strong>${money(product.price)}</strong></div>${groupMarkup}<label>Observações<textarea name="notes" placeholder="Ex.: retirar cebola (opcional)"></textarea></label><div class="option-total"><span>Total do item</span><strong id="custom-product-total">${money(product.price)}</strong></div><button class="primary-button">Adicionar à sacola</button></form>`);
   const form=document.querySelector('#custom-product-form');
   const update=()=>{let total=Number(product.price||0);groups.forEach(g=>form.querySelectorAll(`[data-option-group="${g.key}"]:checked`).forEach(input=>total+=Number(input.dataset.optionPrice||0)));document.querySelector('#custom-product-total').textContent=money(total);};
