@@ -1,0 +1,55 @@
+
+/* =========================================================
+   06) Sidebar e navegação principal
+   Esta sessão molda a lateral do painel do comerciante e os botões
+   de navegação entre pedidos, visão geral, cardápio, chat e loja.
+   A sidebar é o menu principal da aplicação e organiza as áreas do sistema.
+========================================================= */
+
+/* .sidebar { width: 250px; }
+   Mexe na lateral do painel, definindo 250px de largura.
+   Também define fundo, borda, posicionamento fixo e sombra lateral.
+*/
+.sidebar{
+  width:250px;
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,.92));
+  border-right:1px solid rgba(223,219,215,.8);
+  padding:28px 18px 20px;
+  display:flex;
+  flex-direction:column;
+  position:fixed;
+  inset:0 auto 0 0;
+  backdrop-filter:blur(12px);
+  box-shadow:10px 0 30px rgba(31,36,48,.02);
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font:700 24px "Space Grotesk",sans-serif;
+  letter-spacing:-1.2px;
+  padding:0 12px 10px;
+  color:#292c34;
+}
+.brand-word{
+  display:flex;
+  align-items:baseline;
+  gap:2px;
+}
+.brand-pede{
+  color:#1f2430;
+}
+.brand-ia{
+  color:var(--coral);
+}
+.brand-mark{
+  width:30px;
+  height:30px;
+  border-radius:12px;
+  background:linear-gradient(135deg,#f87171 0%, #dc2626 42%, #7f1d1d 100%);
+  color:#fff;
+  display:grid;
+  place-items:center;
+  font:700 18px "Space Grotesk",sans-serif;
+  box-shadow:0 10px 20px rgba(185,28,28,.28);
+}
